@@ -45,3 +45,21 @@ I developed an Elastic Clock for Coco to handle time pressure smartly:
 ## UCI Support
 
 Coco communicates via the standard UCI (Universal Chess Interface) protocol. You can adjust the Hash size, control Threads, or tweak the search parameters (`RFP_Margin`, `LMR_Constant_Scaled`, etc.) directly through your GUI's settings.
+
+## How to Compile
+
+To compile and run Coco from source:
+
+### Windows (GCC / MinGW)
+Open your terminal in the project directory and run:
+```bash
+g++ -O3 -mavx2 -pthread -std=c++17 src/*.cpp -o coco-chess.exe
+```
+
+### Linux / macOS
+Open your terminal in the project directory and run:
+```bash
+g++ -O3 -pthread -std=c++17 src/*.cpp -o coco-chess
+```
+
+Once compiled, you can run the engine executable and interact with it using standard UCI commands, or load it into any chess GUI (such as Cutechess, Arena, or Lichess-bot).
