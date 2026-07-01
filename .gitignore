@@ -1,0 +1,29 @@
+# === C++ Build Artifacts ===
+*.exe
+*.o
+*.obj
+*.pdb
+*.ilk
+
+# === Local Log Files ===
+log.txt
+debug.log
+sprt_results.log
+logs/
+
+# === Personal Testing & Tuning Files ===
+config.json
+build.bat
+run_sprt.bat
+run_tune_30k.bat
+tune_30k.py
+tune_smoke_test.py
+tune_smoke_test.bat
+fastchess_help.md
+opponents/
+testing/
+
+# === Training Scripts & Data ===
+scripts/
+bullet/
+coco.nnue
