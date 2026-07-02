@@ -1,14 +1,14 @@
 # Coco Chess Engine
 
-Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++17. It is designed to combine a fast, parallelized search core with a deep, position-aware neural network that evaluates the board in constant time.
+Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++17. It is designed to combine a fast, search core with a deep, position-aware neural network that evaluates the board in constant time.
 
 ## A Note on Development
 
-This engine is a project I developed through close collaboration with AI. I treat Coco as an evolving piece of software; it is actively being trained, tested, and improved. Every search heuristic and network architecture choice is something I have continuously refined, and the engine will keep getting stronger as I continue to iterate on its code and training data.
+This engine is a project I developed through close with AI. I treat Coco as an evolving piece of software; it is actively being trained, tested, and improved. Therefore, I do not consider it as "work" per se, but rather as a personal project that I am continuously trying to improve. I welcome feedback, suggestions, and criticims from the community as I am aware that most people do not view the who "AI coded" thing positively. Still, it is something I prompted out of the blue because I got bored and wanted to see how far can a hands free engine development would go in terms of its strenth.
 
 ## Why the name?
 
-The name Coco comes from the manga *Witch Hat Atelier*. I just liked the name, and it felt like a fitting title for a project I've poured so much work into.
+The name Coco comes from the manga *Witch Hat Atelier*. I love the MC of the show and I just wanted to use her name for this project. 
 
 ## Core Architecture
 
