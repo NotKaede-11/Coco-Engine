@@ -18,6 +18,7 @@ namespace Search {
     extern int NMP_Divisor;
     extern int Aspiration_Delta;
     extern int History_Threshold;
+    extern int Move_Overhead;
 
     // Initialize search-related tables (like LMR lookup table)
     void init_search_tables();

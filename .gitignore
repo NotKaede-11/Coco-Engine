@@ -11,19 +11,27 @@ debug.log
 sprt_results.log
 logs/
 
-# === Personal Testing & Tuning Files ===
+# === Project Subdirectories to Ignore ===
+# These folders contain test binaries, external engines, datasets, and tuning tools
+tuning/
+testing/
+opponents/
+scripts/
+bullet/
+backups/
+books/
+meowshatranj/
+Ethereal/
+stockfish/
+tournament_settings/
+
+# === Other Untracked Development Files ===
+coco_roadmap.md
+coco.nnue
 config.json
-build.bat
 run_sprt.bat
 run_tune_30k.bat
 tune_30k.py
 tune_smoke_test.py
 tune_smoke_test.bat
 fastchess_help.md
-opponents/
-testing/
-
-# === Training Scripts & Data ===
-scripts/
-bullet/
-coco.nnue

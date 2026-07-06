@@ -51,7 +51,11 @@ Coco communicates via the standard UCI (Universal Chess Interface) protocol. You
 To compile and run Coco from source:
 
 ### Windows (GCC / MinGW)
-Open your terminal in the project directory and run:
+The recommended way to compile on Windows is to run the provided batch file in the project directory:
+```cmd
+build.bat
+```
+This compiles the engine with optimized compiler flags and links the C++ runtime libraries statically. Alternatively, you can compile manually by running:
 ```bash
 g++ -O3 -mavx2 -pthread -std=c++17 src/*.cpp -o coco-chess.exe
 ```
