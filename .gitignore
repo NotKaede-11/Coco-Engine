@@ -28,6 +28,7 @@ Leorik/
 
 # === Other Untracked Development Files ===
 coco_roadmap.md
+engine_references.md
 coco.nnue
 config.json
 run_sprt.bat
