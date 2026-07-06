@@ -314,6 +314,10 @@ bool Board::make_move(Move move) {
     Piece moving_piece = board_array[from];
     PieceType pt = (PieceType)(moving_piece % 6);
 
+    if (us == BLACK) {
+        fullmove_number++;
+    }
+
     // Save state before making the move
     history[history_ply] = {
         castling_rights,
@@ -457,10 +461,6 @@ bool Board::make_move(Move move) {
     en_passant_square = new_en_passant_square;
     if (en_passant_square != SQ_NONE) {
         hash_key ^= zobrist_ep[en_passant_square % 8];
-    }
-
-    if (us == BLACK) {
-        fullmove_number++;
     }
 
     return true;

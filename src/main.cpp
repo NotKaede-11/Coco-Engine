@@ -25,7 +25,9 @@ int main(int argc, char* argv[]) {
     
     // Load NNUE weights from file
     if (!g_nnue.load_network("coco.nnue")) {
-        printf("info string Warning: Could not load NNUE weights file 'coco.nnue'.\n");
+        std::cerr << "Error: Could not load NNUE weights file 'coco.nnue'." << std::endl;
+        std::cerr << "Please ensure 'coco.nnue' is located in the working directory or next to the executable." << std::endl;
+        return 1;
     }
     
     // Parse arguments safely

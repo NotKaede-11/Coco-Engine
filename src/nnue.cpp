@@ -4,6 +4,27 @@
 #include <algorithm>
 #include <cmath>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::string get_executable_directory() {
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string path_str(path);
+    size_t pos = path_str.find_last_of("\\/");
+    return (pos == std::string::npos) ? "" : path_str.substr(0, pos + 1);
+}
+#else
+#include <unistd.h>
+#include <limits.h>
+static std::string get_executable_directory() {
+    char path[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+    std::string path_str = (count > 0) ? std::string(path, count) : "";
+    size_t pos = path_str.find_last_of("/");
+    return (pos == std::string::npos) ? "" : path_str.substr(0, pos + 1);
+}
+#endif
+
 // Global NNUE evaluator instance
 NNUEEvaluator g_nnue;
 
@@ -26,7 +47,13 @@ NNUEEvaluator::NNUEEvaluator() {
 bool NNUEEvaluator::load_network(const std::string& filename) {
     FILE* f = fopen(filename.c_str(), "rb");
     if (!f) {
-        return false;
+        if (filename.find_first_of("\\/") == std::string::npos) {
+            std::string alt_path = get_executable_directory() + filename;
+            f = fopen(alt_path.c_str(), "rb");
+        }
+        if (!f) {
+            return false;
+        }
     }
 
     // Verify file size is exactly 394,244 bytes

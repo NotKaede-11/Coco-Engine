@@ -483,6 +483,7 @@ namespace Search {
     int NMP_Divisor = 6;
     int Aspiration_Delta = 18;
     int History_Threshold = 16367;
+    int Move_Overhead = 30;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
@@ -493,9 +494,7 @@ namespace Search {
     }
 
     void allocate_time(int time_left, int increment) {
-        const int OVERHEAD_BUFFER = 30;
-
-        int usable_time = time_left - OVERHEAD_BUFFER;
+        int usable_time = time_left - Move_Overhead;
         if (usable_time <= 0) {
             usable_time = 10;
         }
@@ -540,6 +539,13 @@ namespace Search {
             
             if (my_time > 0) {
                 allocate_time(my_time, my_inc);
+                if (hard_limit > static_cast<uint64_t>(my_time)) {
+                    hard_limit = my_time;
+                }
+                target_time = start_time + hard_limit;
+            } else if (my_time == 0) {
+                soft_limit = 10;
+                hard_limit = 20;
                 target_time = start_time + hard_limit;
             } else {
                 soft_limit = 0;

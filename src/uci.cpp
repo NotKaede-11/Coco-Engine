@@ -5,11 +5,13 @@
 #include "search.h"
 #include "tt.h"
 #include "evaluate.h"
+#include "nnue.h"
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <chrono>
+#include <memory>
 
 // Worker thread for background search
 std::thread worker_thread;
@@ -203,6 +205,51 @@ void parse_go(const std::string& input, Board& board) {
     start_search(board, depth, wtime, btime, winc, binc, movetime);
 }
 
+// Run a standardized benchmark over 5 positions to depth 10
+void run_benchmark() {
+    std::vector<std::string> bench_positions = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // Startpos
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", // Kiwipete
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", // Position 3
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 2", // Position 4
+        "rnbqkb1r/ppppp1pp/7n/5p2/8/6P1/PPPPPP1P/RNBQKBNR w KQkq - 0 1" // Position 5
+    };
+
+    uint64_t total_nodes = 0;
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    std::cout << "\n=== Running Engine Benchmark ===" << std::endl;
+
+    for (size_t i = 0; i < bench_positions.size(); ++i) {
+        auto b = std::make_unique<Board>();
+        b->parse_fen(bench_positions[i]);
+        
+        // Clear transposition table to ensure determinism
+        tt.clear();
+
+        std::cout << "Benchmarking position " << (i + 1) << "..." << std::endl;
+        
+        // Run search synchronously to depth 10
+        Search::b_abort = false;
+        Search::search_position(*b, 10, -1, -1, 0, 0, -1);
+        
+        // Read nodes_visited
+        extern thread_local uint64_t nodes_visited;
+        total_nodes += nodes_visited;
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+    std::cout << "\n===============================" << std::endl;
+    std::cout << "Total nodes searched: " << total_nodes << std::endl;
+    std::cout << "Time elapsed: " << elapsed_ms << " ms" << std::endl;
+    if (elapsed_ms > 0) {
+        std::cout << "Nodes Per Second (NPS): " << (total_nodes * 1000) / elapsed_ms << std::endl;
+    }
+    std::cout << "===============================" << std::endl;
+}
+
 // Master UCI lifecycle loop
 void uci_loop() {
     Board board;
@@ -223,30 +270,49 @@ void uci_loop() {
             std::cout << "option name NMP_Divisor type spin default 6 min 3 max 12\n";
             std::cout << "option name Aspiration_Delta type spin default 16 min 4 max 40\n";
             std::cout << "option name History_Threshold type spin default 16384 min 4096 max 32768\n";
+            std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
+            std::cout << "option name EvalFile type string default coco.nnue\n";
             std::cout << "uciok\n";
         } else if (line.rfind("setoption", 0) == 0) {
-            std::istringstream iss(line);
-            std::string token, name_label, name, value_label;
-            iss >> token >> name_label >> name >> value_label;
-            if (name_label == "name" && value_label == "value") {
-                int val;
-                if (iss >> val) {
-                    if (name == "Hash") {
-                        tt.resize(val);
-                    } else if (name == "RFP_Margin") {
-                        Search::RFP_Margin = val;
-                    } else if (name == "LMR_Constant_Scaled") {
-                        Search::LMR_Constant_Scaled = val;
+            size_t name_pos = line.find("name ");
+            size_t value_pos = line.find("value ");
+            if (name_pos != std::string::npos && value_pos != std::string::npos) {
+                std::string option_name = line.substr(name_pos + 5, value_pos - (name_pos + 5));
+                while (!option_name.empty() && isspace(option_name.back())) {
+                    option_name.pop_back();
+                }
+                std::string option_value = line.substr(value_pos + 6);
+                while (!option_value.empty() && isspace(option_value.back())) {
+                    option_value.pop_back();
+                }
+
+                try {
+                    if (option_name == "Hash") {
+                        tt.resize(std::stoi(option_value));
+                    } else if (option_name == "Move Overhead") {
+                        Search::Move_Overhead = std::stoi(option_value);
+                    } else if (option_name == "EvalFile") {
+                        if (!g_nnue.load_network(option_value)) {
+                            std::cout << "info string Warning: Could not load NNUE weights file '" << option_value << "'.\n";
+                        } else {
+                            std::cout << "info string NNUE weights file loaded successfully: '" << option_value << "'.\n";
+                        }
+                    } else if (option_name == "RFP_Margin") {
+                        Search::RFP_Margin = std::stoi(option_value);
+                    } else if (option_name == "LMR_Constant_Scaled") {
+                        Search::LMR_Constant_Scaled = std::stoi(option_value);
                         Search::init_search_tables();
-                    } else if (name == "NMP_Base") {
-                        Search::NMP_Base = val;
-                    } else if (name == "NMP_Divisor") {
-                        Search::NMP_Divisor = val;
-                    } else if (name == "Aspiration_Delta") {
-                        Search::Aspiration_Delta = val;
-                    } else if (name == "History_Threshold") {
-                        Search::History_Threshold = val;
+                    } else if (option_name == "NMP_Base") {
+                        Search::NMP_Base = std::stoi(option_value);
+                    } else if (option_name == "NMP_Divisor") {
+                        Search::NMP_Divisor = std::stoi(option_value);
+                    } else if (option_name == "Aspiration_Delta") {
+                        Search::Aspiration_Delta = std::stoi(option_value);
+                    } else if (option_name == "History_Threshold") {
+                        Search::History_Threshold = std::stoi(option_value);
                     }
+                } catch (...) {
+                    // Ignore malformed GUI option settings
                 }
             }
         } else if (line == "isready") {
@@ -265,6 +331,9 @@ void uci_loop() {
             run_perft_divide(depth, board);
         } else if (line.rfind("go", 0) == 0) {
             parse_go(line, board);
+        } else if (line == "bench") {
+            stop_search();
+            run_benchmark();
         } else if (line == "stop") {
             stop_search();
         } else if (line == "eval") {
