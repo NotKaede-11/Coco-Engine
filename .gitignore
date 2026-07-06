@@ -25,6 +25,10 @@ Ethereal/
 stockfish/
 tournament_settings/
 Leorik/
+weiss/
+Pyrrhic/
+Fathom/
+nnue-tools/
 
 # === Other Untracked Development Files ===
 coco_roadmap.md
