@@ -29,6 +29,7 @@ weiss/
 Pyrrhic/
 Fathom/
 nnue-tools/
+.agents/
 
 # === Other Untracked Development Files ===
 coco_roadmap.md
