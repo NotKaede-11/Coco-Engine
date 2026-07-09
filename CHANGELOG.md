@@ -4,7 +4,7 @@ All notable changes to the Coco Chess Engine will be documented in this file.
 
 ## [1.1.0] - 2026-07-09
 
-This release completes the **Tier 4: Selective Deepening and Advanced Pruning** milestone — a large batch of search-selectivity, pruning, and tactical-vision upgrades. All changes were verified through the SPRT testing funnel before merge.
+This release ships a large batch of search-selectivity, pruning, and tactical-vision upgrades. All changes were verified through the SPRT testing funnel before merge.
 
 ### Added
 - **Static Exchange Evaluation (SEE):** Added a fast swap-list SEE (`Board::see`) plus an attacker enumeration helper (`get_all_attackers`). Used to prune losing captures in Quiescence Search before they touch the recursive tree.
