@@ -118,7 +118,7 @@ void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply)
 }
 
 // Forward declarations of search functions
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false, int parent_eval_1 = INFINITY_SCORE, int parent_eval_2 = INFINITY_SCORE, Move excluded_move = Move());
+int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false, int parent_eval_1 = INFINITY_SCORE, int parent_eval_2 = INFINITY_SCORE, Move excluded_move = Move(), int double_ext = 0);
 int quiescence(Board& board, int alpha, int beta, int ply);
 
 // Extract Principal Variation (PV) from the Transposition Table
@@ -165,7 +165,7 @@ int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
 }
 
 // Alpha-Beta Search Core with Null Move Pruning (NMP)
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search, int parent_eval_1, int parent_eval_2, Move excluded_move) {
+int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search, int parent_eval_1, int parent_eval_2, Move excluded_move, int double_ext) {
     // Cooperative search abortion check
     check_time();
     if (Search::b_abort) return 0;
@@ -199,7 +199,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         if (has_non_pawn_material) {
             int R = Search::NMP_Base + (depth / Search::NMP_Divisor);
             board.make_null_move();
-            int null_score = -alpha_beta(board, -beta, -beta + 1, depth - 1 - R, ply + 1, false, true, parent_eval_1, parent_eval_2, excluded_move);
+            int null_score = -alpha_beta(board, -beta, -beta + 1, depth - 1 - R, ply + 1, false, true, parent_eval_1, parent_eval_2, excluded_move, double_ext);
             board.unmake_null_move();
             
             if (null_score >= beta) {
@@ -266,7 +266,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     // Internal Iterative Deepening (IID)
     if (tt_move.is_none() && depth >= 4 && !in_check && is_pv) {
         int iid_depth = depth - 2;
-        alpha_beta(board, alpha, beta, iid_depth, ply, is_pv, in_null_move_search, parent_eval_1, parent_eval_2, excluded_move);
+        alpha_beta(board, alpha, beta, iid_depth, ply, is_pv, in_null_move_search, parent_eval_1, parent_eval_2, excluded_move, double_ext);
         // Time-abort check: immediately return 0 and skip probing the TT to prevent move pollution
         if (Search::b_abort) return 0;
         int dummy_score;
@@ -336,14 +336,26 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
             int singular_beta = tt_score - singular_margin;
             int singular_depth = depth / 2;
             
-            int singular_score = alpha_beta(board, singular_beta - 1, singular_beta, singular_depth, ply, false, in_null_move_search, parent_eval_1, parent_eval_2, tt_move);
+            int singular_score = alpha_beta(board, singular_beta - 1, singular_beta, singular_depth, ply, false, in_null_move_search, parent_eval_1, parent_eval_2, tt_move, double_ext);
             
             if (singular_score < singular_beta) {
-                extension = 1;
+                // Move is singular: extend by 1. Double-extend (+2) when it is
+                // strongly singular (verified well below the singular bound) and
+                // only on non-PV nodes, capped to prevent runaway depth inflation.
+                if (!is_pv && double_ext < 6 && singular_score < singular_beta - 2 * depth) {
+                    extension = 2;
+                } else {
+                    extension = 1;
+                }
             } else if (singular_score >= beta && std::abs(singular_score) < MATE_THRESHOLD) {
+                // Multicut: excluding the TT move still fails high over beta, so
+                // multiple moves compete. Return immediately as a softbound.
                 return singular_score;
             }
         }
+        
+        // Propagate cumulative double-extension count along the main search path
+        int next_double_ext = double_ext + (extension >= 2 ? 1 : 0);
         
         board.make_move(move, true);
         legal_moves_count++;
@@ -355,7 +367,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         
         int score;
         if (moves_searched == 0) {
-            score = -alpha_beta(board, -beta, -alpha, depth - 1 + extension, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
+            score = -alpha_beta(board, -beta, -alpha, depth - 1 + extension, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2, Move(), next_double_ext);
         } else {
             bool lmr_applied = false;
             
@@ -375,15 +387,15 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                     reduction = depth - 2; // Cap reduction so remaining depth is exactly 1
                 }
                 
-                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
+                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2, Move(), next_double_ext);
                 lmr_applied = true;
             } else {
-                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
+                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2, Move(), next_double_ext);
             }
             
             // Re-search trigger
             if (score > alpha && score < beta) {
-                score = -alpha_beta(board, -beta, -alpha, depth - 1, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
+                score = -alpha_beta(board, -beta, -alpha, depth - 1, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2, Move(), next_double_ext);
             }
         }
         

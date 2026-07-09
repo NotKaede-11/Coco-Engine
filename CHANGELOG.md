@@ -2,6 +2,15 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [1.1.1] - 2026-07-09
+
+### Added
+- **Singular Extensions (double-extension):** The singular verification search now grants a +2 ply extension when a TT move is strongly singular (verified well below the singular bound) on non-PV nodes. Cumulative double extensions are capped at 6 to prevent runaway depth inflation.
+- **UCI Engine Name:** The engine now identifies itself as `Coco v1.1.0` in UCI handshake.
+
+### Changed
+- **Code Formatting:** `src/uci.cpp` reformatted to Allman brace style for consistency.
+
 ## [1.1.0] - 2026-07-09
 
 This release ships a large batch of search-selectivity, pruning, and tactical-vision upgrades. All changes were verified through the SPRT testing funnel before merge.
