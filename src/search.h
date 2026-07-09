@@ -3,6 +3,8 @@
 
 #include "board.h"
 
+const int INFINITY_SCORE = 50000;
+
 namespace Search {
     // Timing parameters for active search
     extern uint64_t start_time;

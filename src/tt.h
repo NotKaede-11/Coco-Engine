@@ -37,6 +37,9 @@ public:
     // Probe the table for a stored evaluation score and best move
     bool probe(U64 key, int& score, Move& best_move, uint8_t depth, int alpha, int beta, int ply);
 
+    // Probe the table for raw stored entry metrics (depth, score, flag, best_move)
+    bool probe_entry(U64 key, int& score, uint8_t& depth, uint8_t& flag, Move& best_move, int ply);
+
 private:
     TTEntry* table;
     size_t num_entries;

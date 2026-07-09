@@ -4,6 +4,7 @@
 #include "board.h"
 #include <string>
 #include <cstdint>
+#include <immintrin.h>
 
 // Inline perspective feature mapping helper functions
 inline int get_feature_index_white(int color, int pt, int sq) {

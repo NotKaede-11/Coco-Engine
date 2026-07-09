@@ -18,12 +18,23 @@ std::thread worker_thread;
 
 // Recursive Perft function
 uint64_t perft(int depth, Board& board) {
-    if (depth == 0) return 1ULL;
-    
     MoveList move_list;
     generate_pseudo_legal_moves(board, move_list);
-    uint64_t nodes = 0;
     
+    if (depth == 1) {
+        uint64_t nodes = 0;
+        for (int i = 0; i < move_list.count; i++) {
+            if (board.make_move(move_list.moves[i])) {
+                nodes++;
+                board.unmake_move(move_list.moves[i]);
+            }
+        }
+        return nodes;
+    }
+    
+    if (depth == 0) return 1ULL;
+    
+    uint64_t nodes = 0;
     for (int i = 0; i < move_list.count; i++) {
         if (!board.make_move(move_list.moves[i])) {
             continue; // Skip illegal moves

@@ -65,6 +65,9 @@ inline U64 get_queen_attacks(int square, U64 occupancy) {
     return get_bishop_attacks(square, occupancy) | get_rook_attacks(square, occupancy);
 }
 
+extern U64 between_bb[64][64];
+extern U64 line_bb[64][64];
+
 // Pseudo-legal move generator
 void generate_pseudo_legal_moves(const Board& board, MoveList& move_list);
 

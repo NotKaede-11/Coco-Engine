@@ -99,3 +99,19 @@ bool TranspositionTable::probe(U64 key, int& score, Move& best_move, uint8_t dep
     
     return false;
 }
+
+bool TranspositionTable::probe_entry(U64 key, int& score, uint8_t& depth, uint8_t& flag, Move& best_move, int ply) {
+    if (!table || num_entries == 0) return false;
+    
+    size_t index = key % num_entries;
+    
+    if (table[index].key == key) {
+        best_move = table[index].best_move;
+        score = score_from_tt(table[index].score, ply);
+        depth = table[index].depth;
+        flag = table[index].flag;
+        return true;
+    }
+    
+    return false;
+}

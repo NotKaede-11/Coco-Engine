@@ -18,6 +18,9 @@ U64 rook_magics[64];
 U64* bishop_attacks[64];
 U64* rook_attacks[64];
 
+U64 between_bb[64][64];
+U64 line_bb[64][64];
+
 // Flat tables for sliding attacks
 U64 bishop_attacks_table[5248];
 U64 rook_attacks_table[102400];
@@ -246,6 +249,50 @@ void init_all_attack_tables() {
         bishop_offset += b_indices;
         rook_offset += r_indices;
     }
+
+    // 3. Initialize between_bb and line_bb
+    for (int sq1 = 0; sq1 < 64; sq1++) {
+        for (int sq2 = 0; sq2 < 64; sq2++) {
+            between_bb[sq1][sq2] = 0ULL;
+            line_bb[sq1][sq2] = 0ULL;
+            if (sq1 == sq2) continue;
+            
+            int r1 = sq1 / 8, f1 = sq1 % 8;
+            int r2 = sq2 / 8, f2 = sq2 % 8;
+            
+            int dr = r2 - r1;
+            int df = f2 - f1;
+            
+            if (dr == 0) { // Same rank
+                line_bb[sq1][sq2] = 0xFFULL << (r1 * 8);
+                int step = (df > 0) ? 1 : -1;
+                for (int f = f1 + step; f != f2; f += step) {
+                    between_bb[sq1][sq2] |= (1ULL << (r1 * 8 + f));
+                }
+            } else if (df == 0) { // Same file
+                line_bb[sq1][sq2] = 0x0101010101010101ULL << f1;
+                int step = (dr > 0) ? 1 : -1;
+                for (int r = r1 + step; r != r2; r += step) {
+                    between_bb[sq1][sq2] |= (1ULL << (r * 8 + f1));
+                }
+            } else if (abs(dr) == abs(df)) { // Same diagonal
+                int step_r = (dr > 0) ? 1 : -1;
+                int step_f = (df > 0) ? 1 : -1;
+                
+                // Precompute full line
+                for (int r = r1, f = f1; r >= 0 && r < 8 && f >= 0 && f < 8; r += step_r, f += step_f) {
+                    line_bb[sq1][sq2] |= (1ULL << (r * 8 + f));
+                }
+                for (int r = r1 - step_r, f = f1 - step_f; r >= 0 && r < 8 && f >= 0 && f < 8; r -= step_r, f -= step_f) {
+                    line_bb[sq1][sq2] |= (1ULL << (r * 8 + f));
+                }
+                
+                for (int r = r1 + step_r, f = f1 + step_f; r != r2; r += step_r, f += step_f) {
+                    between_bb[sq1][sq2] |= (1ULL << (r * 8 + f));
+                }
+            }
+        }
+    }
 }
 
 void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
@@ -353,13 +400,15 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     while (knights) {
         int from = pop_lsb(knights);
         U64 attacks = knight_attacks[from] & ~own_occ;
-        while (attacks) {
-            int to = pop_lsb(attacks);
-            if (enemy_occ & (1ULL << to)) {
-                move_list.add(Move(from, to, FLAG_CAPTURE));
-            } else {
-                move_list.add(Move(from, to, FLAG_QUIET));
-            }
+        U64 captures = attacks & enemy_occ;
+        U64 quiets = attacks & empty;
+        while (captures) {
+            int to = pop_lsb(captures);
+            move_list.add(Move(from, to, FLAG_CAPTURE));
+        }
+        while (quiets) {
+            int to = pop_lsb(quiets);
+            move_list.add(Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -368,13 +417,15 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     while (bishops) {
         int from = pop_lsb(bishops);
         U64 attacks = get_bishop_attacks(from, board.get_occupancy(BOTH)) & ~own_occ;
-        while (attacks) {
-            int to = pop_lsb(attacks);
-            if (enemy_occ & (1ULL << to)) {
-                move_list.add(Move(from, to, FLAG_CAPTURE));
-            } else {
-                move_list.add(Move(from, to, FLAG_QUIET));
-            }
+        U64 captures = attacks & enemy_occ;
+        U64 quiets = attacks & empty;
+        while (captures) {
+            int to = pop_lsb(captures);
+            move_list.add(Move(from, to, FLAG_CAPTURE));
+        }
+        while (quiets) {
+            int to = pop_lsb(quiets);
+            move_list.add(Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -383,13 +434,15 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     while (rooks) {
         int from = pop_lsb(rooks);
         U64 attacks = get_rook_attacks(from, board.get_occupancy(BOTH)) & ~own_occ;
-        while (attacks) {
-            int to = pop_lsb(attacks);
-            if (enemy_occ & (1ULL << to)) {
-                move_list.add(Move(from, to, FLAG_CAPTURE));
-            } else {
-                move_list.add(Move(from, to, FLAG_QUIET));
-            }
+        U64 captures = attacks & enemy_occ;
+        U64 quiets = attacks & empty;
+        while (captures) {
+            int to = pop_lsb(captures);
+            move_list.add(Move(from, to, FLAG_CAPTURE));
+        }
+        while (quiets) {
+            int to = pop_lsb(quiets);
+            move_list.add(Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -398,13 +451,15 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     while (queens) {
         int from = pop_lsb(queens);
         U64 attacks = get_queen_attacks(from, board.get_occupancy(BOTH)) & ~own_occ;
-        while (attacks) {
-            int to = pop_lsb(attacks);
-            if (enemy_occ & (1ULL << to)) {
-                move_list.add(Move(from, to, FLAG_CAPTURE));
-            } else {
-                move_list.add(Move(from, to, FLAG_QUIET));
-            }
+        U64 captures = attacks & enemy_occ;
+        U64 quiets = attacks & empty;
+        while (captures) {
+            int to = pop_lsb(captures);
+            move_list.add(Move(from, to, FLAG_CAPTURE));
+        }
+        while (quiets) {
+            int to = pop_lsb(quiets);
+            move_list.add(Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -413,13 +468,15 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     if (king) {
         int from = get_lsb(king);
         U64 attacks = king_attacks[from] & ~own_occ;
-        while (attacks) {
-            int to = pop_lsb(attacks);
-            if (enemy_occ & (1ULL << to)) {
-                move_list.add(Move(from, to, FLAG_CAPTURE));
-            } else {
-                move_list.add(Move(from, to, FLAG_QUIET));
-            }
+        U64 captures = attacks & enemy_occ;
+        U64 quiets = attacks & empty;
+        while (captures) {
+            int to = pop_lsb(captures);
+            move_list.add(Move(from, to, FLAG_CAPTURE));
+        }
+        while (quiets) {
+            int to = pop_lsb(quiets);
+            move_list.add(Move(from, to, FLAG_QUIET));
         }
 
         // Castling rights checking

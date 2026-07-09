@@ -9,7 +9,6 @@
 #include <cmath>
 
 // Constants for evaluation and search bounds
-const int INFINITY_SCORE = 50000;
 const int MATE_SCORE = 30000;
 const int MATE_THRESHOLD = 29000;
 
@@ -119,7 +118,7 @@ void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply)
 }
 
 // Forward declarations of search functions
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false);
+int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false, int parent_eval_1 = INFINITY_SCORE, int parent_eval_2 = INFINITY_SCORE, Move excluded_move = Move());
 int quiescence(Board& board, int alpha, int beta, int ply);
 
 // Extract Principal Variation (PV) from the Transposition Table
@@ -166,7 +165,7 @@ int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
 }
 
 // Alpha-Beta Search Core with Null Move Pruning (NMP)
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search) {
+int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search, int parent_eval_1, int parent_eval_2, Move excluded_move) {
     // Cooperative search abortion check
     check_time();
     if (Search::b_abort) return 0;
@@ -192,7 +191,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     bool in_check = board.is_square_attacked(king_sq, us ^ 1);
     
     // Null Move Pruning (NMP)
-    if (depth >= 3 && !is_pv && !in_check && !in_null_move_search) {
+    if (depth >= 3 && !is_pv && !in_check && !in_null_move_search && excluded_move.is_none()) {
         bool has_non_pawn_material = board.get_pieces(us, KNIGHT) || 
                                      board.get_pieces(us, BISHOP) || 
                                      board.get_pieces(us, ROOK) || 
@@ -200,7 +199,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         if (has_non_pawn_material) {
             int R = Search::NMP_Base + (depth / Search::NMP_Divisor);
             board.make_null_move();
-            int null_score = -alpha_beta(board, -beta, -beta + 1, depth - 1 - R, ply + 1, false, true);
+            int null_score = -alpha_beta(board, -beta, -beta + 1, depth - 1 - R, ply + 1, false, true, parent_eval_1, parent_eval_2, excluded_move);
             board.unmake_null_move();
             
             if (null_score >= beta) {
@@ -211,25 +210,50 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     
     // Probe the Transposition Table
     int tt_score = 0;
+    uint8_t tt_depth = 0;
+    uint8_t tt_flag = 0;
     Move tt_move;
-    if (tt.probe(board.get_hash_key(), tt_score, tt_move, depth, alpha, beta, ply)) {
-        return tt_score;
+    bool tt_hit = tt.probe_entry(board.get_hash_key(), tt_score, tt_depth, tt_flag, tt_move, ply);
+    
+    if (tt_hit && tt_move != excluded_move) {
+        if (tt_depth >= depth) {
+            if (tt_flag == HASH_EXACT) return tt_score;
+            if (tt_flag == HASH_ALPHA && tt_score <= alpha) return alpha;
+            if (tt_flag == HASH_BETA && tt_score >= beta) return beta;
+        }
+    }
+    if (tt_move == excluded_move) {
+        tt_move = Move();
     }
     
+    // Internal Iterative Reductions (IIR)
+    if (is_pv && depth >= 3 && tt_move.is_none()) {
+        depth--;
+    }
+
     // Retrieve static evaluation
     int static_eval = Evaluation::evaluate(board);
     
+    // Compute improving: static evaluation is better than 2 plies ago
+    bool improving = false;
+    if (!in_check && parent_eval_2 != INFINITY_SCORE) {
+        improving = static_eval > parent_eval_2;
+    }
+    
+    int next_parent_eval_1 = in_check ? parent_eval_1 : static_eval;
+    int next_parent_eval_2 = in_check ? parent_eval_2 : parent_eval_1;
+    
     // Reverse Futility Pruning (RFP) / Static Null Move Pruning
     // Strictly disabled if beta is near a checkmate score to prevent mate-blindness tactical leaks
-    if (depth <= 3 && !is_pv && !in_check && std::abs(beta) < MATE_SCORE - MAX_PLY) {
-        int margin = Search::RFP_Margin * depth;
+    if (depth <= 3 && !is_pv && !in_check && excluded_move.is_none() && std::abs(beta) < MATE_SCORE - MAX_PLY) {
+        int margin = Search::RFP_Margin * depth - (improving ? 35 : 0);
         if (static_eval - margin >= beta) {
             return static_eval;
         }
     }
     
     // Razoring
-    if (depth == 1 && !is_pv && !in_check && alpha > -INFINITY_SCORE + 1000) {
+    if (depth == 1 && !is_pv && !in_check && excluded_move.is_none() && alpha > -INFINITY_SCORE + 1000) {
         int razor_margin = 300;
         if (static_eval + razor_margin <= alpha) {
             int q_score = quiescence(board, alpha, beta, ply);
@@ -242,7 +266,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     // Internal Iterative Deepening (IID)
     if (tt_move.is_none() && depth >= 4 && !in_check && is_pv) {
         int iid_depth = depth - 2;
-        alpha_beta(board, alpha, beta, iid_depth, ply, is_pv, in_null_move_search);
+        alpha_beta(board, alpha, beta, iid_depth, ply, is_pv, in_null_move_search, parent_eval_1, parent_eval_2, excluded_move);
         // Time-abort check: immediately return 0 and skip probing the TT to prevent move pollution
         if (Search::b_abort) return 0;
         int dummy_score;
@@ -259,9 +283,14 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     int best_score = -INFINITY_SCORE;
     Move best_move_in_node;
     int moves_searched = 0;
-    
+    LegalityMasks masks = board.get_legality_masks();
+ 
     for (int i = 0; i < move_list.count; i++) {
         Move move = move_list.moves[i];
+        
+        if (move == excluded_move) {
+            continue;
+        }
         
         // Late Move Pruning (LMP)
         if (!move.is_capture() && !move.is_promotion()) {
@@ -287,9 +316,36 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         }
         
         // Symmetrical illegal move filtering
-        if (!board.make_move(move)) {
+        if (!board.is_move_legal(move, masks)) {
             continue;
         }
+
+        int extension = 0;
+
+        // Singular Extension Check
+        if (ply > 0
+            && depth >= 6 + is_pv
+            && move == tt_move
+            && excluded_move.is_none()
+            && tt_hit
+            && tt_depth >= depth - 3
+            && tt_flag != HASH_ALPHA
+            && std::abs(tt_score) < MATE_THRESHOLD) {
+            
+            int singular_margin = depth * (is_pv ? 1 : 2);
+            int singular_beta = tt_score - singular_margin;
+            int singular_depth = depth / 2;
+            
+            int singular_score = alpha_beta(board, singular_beta - 1, singular_beta, singular_depth, ply, false, in_null_move_search, parent_eval_1, parent_eval_2, tt_move);
+            
+            if (singular_score < singular_beta) {
+                extension = 1;
+            } else if (singular_score >= beta && std::abs(singular_score) < MATE_THRESHOLD) {
+                return singular_score;
+            }
+        }
+        
+        board.make_move(move, true);
         legal_moves_count++;
         
         // Check if this move gives check
@@ -299,7 +355,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         
         int score;
         if (moves_searched == 0) {
-            score = -alpha_beta(board, -beta, -alpha, depth - 1, ply + 1, is_pv, in_null_move_search);
+            score = -alpha_beta(board, -beta, -alpha, depth - 1 + extension, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
         } else {
             bool lmr_applied = false;
             
@@ -310,20 +366,24 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                 int d_idx = std::min(depth, 63);
                 int m_idx = std::min(moves_searched, 63);
                 int reduction = lmr_table[d_idx][m_idx];
+                bool has_history = parent_eval_2 != INFINITY_SCORE;
+                if (has_history && !improving) {
+                    reduction++;
+                }
                 
                 if (depth - 1 - reduction < 1) {
                     reduction = depth - 2; // Cap reduction so remaining depth is exactly 1
                 }
                 
-                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1, false, in_null_move_search);
+                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
                 lmr_applied = true;
             } else {
-                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1, ply + 1, false, in_null_move_search);
+                score = -alpha_beta(board, -alpha - 1, -alpha, depth - 1, ply + 1, false, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
             }
             
             // Re-search trigger
             if (score > alpha && score < beta) {
-                score = -alpha_beta(board, -beta, -alpha, depth - 1, ply + 1, is_pv, in_null_move_search);
+                score = -alpha_beta(board, -beta, -alpha, depth - 1, ply + 1, is_pv, in_null_move_search, next_parent_eval_1, next_parent_eval_2);
             }
         }
         
@@ -350,10 +410,12 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
             alpha = score;
             if (alpha >= beta) {
                 // Store beta cutoff in TT
-                tt.store(board.get_hash_key(), move, beta, depth, HASH_BETA, ply);
+                if (excluded_move.is_none()) {
+                    tt.store(board.get_hash_key(), move, beta, depth, HASH_BETA, ply);
+                }
                 
                 // Update killer moves and history heuristic for quiet moves
-                if (!move.is_capture() && !move.is_promotion() && ply < MAX_PLY) {
+                if (excluded_move.is_none() && !move.is_capture() && !move.is_promotion() && ply < MAX_PLY) {
                     // Update Killer Moves
                     if (killer_moves[ply][0] != move) {
                         killer_moves[ply][1] = killer_moves[ply][0];
@@ -414,7 +476,9 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     if (best_score <= alpha_orig) {
         flag = HASH_ALPHA;
     }
-    tt.store(board.get_hash_key(), best_move_in_node, best_score, depth, flag, ply);
+    if (excluded_move.is_none()) {
+        tt.store(board.get_hash_key(), best_move_in_node, best_score, depth, flag, ply);
+    }
     
     return best_score;
 }
@@ -442,6 +506,9 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
     generate_pseudo_legal_moves(board, move_list);
     order_moves(board, move_list, Move(), ply);
     
+    LegalityMasks masks = board.get_legality_masks();
+    int moves_searched = 0;
+
     for (int i = 0; i < move_list.count; i++) {
         Move move = move_list.moves[i];
         
@@ -449,10 +516,27 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
         if (!move.is_capture()) {
             continue;
         }
-        
-        if (!board.make_move(move)) {
+
+        // Safe QS Futility Pruning
+        if (moves_searched >= 2 && !move.is_promotion()) {
+            Piece captured = board.get_piece_at(move.to());
+            int cap_type = (captured != NO_PIECE) ? (captured % 6) : PAWN;
+            const int piece_values[6] = { 100, 320, 330, 500, 900, 20000 };
+            if (stand_pat + 350 + piece_values[cap_type] <= alpha) {
+                continue;
+            }
+        }
+
+        // Static Exchange Evaluation: prune losing captures
+        if (board.see(move) < 0) {
             continue;
         }
+        
+        if (!board.is_move_legal(move, masks)) {
+            continue;
+        }
+        board.make_move(move, true);
+        moves_searched++;
         
         int score = -quiescence(board, -beta, -alpha, ply + 1);
         board.unmake_move(move);
@@ -513,7 +597,6 @@ namespace Search {
     void search_position(Board& board, int max_depth, int wtime, int btime, int winc, int binc, int movetime) {
         start_time = get_time_ms();
         b_abort = false;
-        
         // Reset killer moves and history table at start of search
         for (int i = 0; i < MAX_PLY; ++i) {
             killer_moves[i][0] = Move();
@@ -553,12 +636,23 @@ namespace Search {
                 target_time = 0; // Infinite/fixed-depth search
             }
         }
+        // Count legal moves at the root
+        int num_legal_moves = 0;
+        MoveList root_list;
+        generate_pseudo_legal_moves(board, root_list);
+        for (int i = 0; i < root_list.count; i++) {
+            if (board.make_move(root_list.moves[i])) {
+                num_legal_moves++;
+                board.unmake_move(root_list.moves[i]);
+            }
+        }
         
         Move best_move;
         Move last_completed_best_move;
+        Move previous_best_move = Move();
+        int best_move_stability_count = 0;
         
         int target_depth = max_depth;
-        
         int last_score = 0;
 
         // Iterative Deepening loop
@@ -609,7 +703,10 @@ namespace Search {
                 break;
             }
             
-            last_score = score;
+            // Single legal move optimization: immediately break after completing depth 1
+            if (num_legal_moves == 1 && current_depth >= 1) {
+                break;
+            }
             
             // Probe TT for the best move of the completed depth
             int temp_score;
@@ -626,6 +723,43 @@ namespace Search {
             if (pv_len > 0 && last_completed_best_move.is_none()) {
                 last_completed_best_move = pv[0];
             }
+
+            // Track stability of the best move
+            Move current_best_move = last_completed_best_move;
+            if (current_depth > 1) {
+                if (!current_best_move.is_none() && !previous_best_move.is_none() && current_best_move == previous_best_move) {
+                    best_move_stability_count++;
+                } else {
+                    best_move_stability_count = 0;
+                }
+            }
+            previous_best_move = current_best_move;
+
+            // Calculate dynamic time multiplier
+            double time_multiplier = 1.0;
+            if (current_depth >= 5) {
+                if (best_move_stability_count >= 3) {
+                    time_multiplier *= 0.65; // Best move highly stable: reduce time by 35%
+                } else if (best_move_stability_count >= 2) {
+                    time_multiplier *= 0.80; // Best move stable: reduce time by 20%
+                } else if (best_move_stability_count == 0) {
+                    time_multiplier *= 1.40; // Best move changed: think 40% longer
+                }
+
+                if (score < last_score - 30) {
+                    time_multiplier *= 1.35; // Score dropping: think 35% longer
+                }
+            }
+
+            uint64_t adjusted_soft_limit = soft_limit;
+            if (soft_limit > 0) {
+                adjusted_soft_limit = static_cast<uint64_t>(soft_limit * time_multiplier);
+                // Prevent over-pruning or exceeding hard limit bounds
+                adjusted_soft_limit = std::max(adjusted_soft_limit, static_cast<uint64_t>(soft_limit * 0.3));
+                adjusted_soft_limit = std::min(adjusted_soft_limit, hard_limit);
+            }
+
+            last_score = score;
             
             // Calculate metrics
             uint64_t elapsed = get_time_ms() - start_time;
@@ -655,7 +789,7 @@ namespace Search {
             }
             std::cout << std::endl;
 
-            if (soft_limit != 0 && elapsed > soft_limit) {
+            if (adjusted_soft_limit != 0 && elapsed > adjusted_soft_limit) {
                 break;
             }
         }

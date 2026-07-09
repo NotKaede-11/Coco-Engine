@@ -18,7 +18,7 @@
 #include <memory>
 
 // External function declarations from search.cpp
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false);
+int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false, int parent_eval_1 = INFINITY_SCORE, int parent_eval_2 = INFINITY_SCORE, Move excluded_move = Move());
 
 // Enforce 32-byte memory packing layout required by bullet trainers
 #pragma pack(push, 1)

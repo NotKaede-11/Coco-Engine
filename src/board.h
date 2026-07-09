@@ -19,6 +19,12 @@ struct StateInfo {
     Accumulator accumulator;
 };
 
+struct LegalityMasks {
+    U64 checkers;
+    U64 pinned;
+    U64 pin_rays[64];
+};
+
 class Board {
 public:
     Board();
@@ -34,7 +40,7 @@ public:
 
     // Make a move. Returns false if the move was illegal (exposed king to check),
     // in which case the board is reverted to the original state.
-    bool make_move(Move move);
+    bool make_move(Move move, bool checked = false);
 
     // Unmake a move, reverting the board state
     void unmake_move(Move move);
@@ -46,6 +52,14 @@ public:
 
     // Check if a square is attacked by any piece of the specified attacker color
     bool is_square_attacked(int square, int attacker_color) const;
+
+    // Legality checks
+    LegalityMasks get_legality_masks() const;
+    bool is_move_legal(Move move, const LegalityMasks& masks) const;
+
+    // Static Exchange Evaluation (SEE)
+    int see(Move move) const;
+    U64 get_all_attackers(int square, U64 occ) const;
 
     // Getters
     U64 get_pieces(int color, int piece_type) const { return pieces[color][piece_type]; }

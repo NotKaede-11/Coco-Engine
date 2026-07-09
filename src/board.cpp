@@ -303,16 +303,17 @@ bool Board::is_square_attacked(int square, int attacker_color) const {
     return false;
 }
 
-bool Board::make_move(Move move) {
+bool Board::make_move(Move move, bool checked) {
     int from = move.from();
     int to = move.to();
     int flag = move.flag();
 
     Color us = side_to_move;
     Color them = (Color)(us ^ 1);
-    side_to_move = them;
     Piece moving_piece = board_array[from];
     PieceType pt = (PieceType)(moving_piece % 6);
+
+    side_to_move = them;
 
     if (us == BLACK) {
         fullmove_number++;
@@ -343,38 +344,32 @@ bool Board::make_move(Move move) {
     if (move.is_capture()) {
         if (flag == FLAG_EP) {
             int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
-            history[history_ply - 1].captured_piece = board_array[ep_pawn_sq];
-
+            Piece captured = board_array[ep_pawn_sq];
+            history[history_ply - 1].captured_piece = captured;
+            
             // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
             nnue_deactivate_piece(them, PAWN, ep_pawn_sq);
 
             clear_bit(pieces[them][PAWN], ep_pawn_sq);
             board_array[ep_pawn_sq] = NO_PIECE;
-
             hash_key ^= zobrist_pieces[them][PAWN][ep_pawn_sq];
         } else {
             Piece captured = board_array[to];
             history[history_ply - 1].captured_piece = captured;
-            PieceType captured_type = (PieceType)(captured % 6);
+            PieceType cap_type = (PieceType)(captured % 6);
 
             // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-            nnue_deactivate_piece(them, captured_type, to);
+            nnue_deactivate_piece(them, cap_type, to);
 
-            clear_bit(pieces[them][captured_type], to);
-
-            hash_key ^= zobrist_pieces[them][captured_type][to];
+            clear_bit(pieces[them][cap_type], to);
+            hash_key ^= zobrist_pieces[them][cap_type][to];
         }
         halfmove_clock = 0; // Reset on capture
     } else {
-        if (pt == PAWN) {
-            halfmove_clock = 0; // Reset on pawn push
-        } else {
-            halfmove_clock++;
-        }
+        halfmove_clock++;
     }
 
     // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-    // Move the piece from -> to
     nnue_deactivate_piece(us, pt, from);
     nnue_activate_piece(us, pt, to);
 
@@ -446,11 +441,12 @@ bool Board::make_move(Move move) {
     update_occupancies();
 
     // Verify move legality (cannot expose king to check)
-    int king_sq = get_lsb(pieces[us][KING]);
-    if (is_square_attacked(king_sq, them)) {
-        // Revert move
-        unmake_move(move);
-        return false;
+    if (!checked) {
+        int king_sq = get_lsb(pieces[us][KING]);
+        if (is_square_attacked(king_sq, them)) {
+            unmake_move(move);
+            return false;
+        }
     }
 
     // Finalize state updates
@@ -659,6 +655,207 @@ bool Board::is_repetition() const {
         }
     }
     return false;
+}
+
+U64 Board::get_all_attackers(int square, U64 occ) const {
+    U64 attackers = 0;
+    
+    // Pawns
+    attackers |= get_pawn_attacks(BLACK, square) & pieces[WHITE][PAWN];
+    attackers |= get_pawn_attacks(WHITE, square) & pieces[BLACK][PAWN];
+    
+    // Knights
+    attackers |= get_knight_attacks(square) & (pieces[WHITE][KNIGHT] | pieces[BLACK][KNIGHT]);
+    
+    // Bishops / Queens
+    attackers |= get_bishop_attacks(square, occ) & (pieces[WHITE][BISHOP] | pieces[BLACK][BISHOP] | pieces[WHITE][QUEEN] | pieces[BLACK][QUEEN]);
+    
+    // Rooks / Queens
+    attackers |= get_rook_attacks(square, occ) & (pieces[WHITE][ROOK] | pieces[BLACK][ROOK] | pieces[WHITE][QUEEN] | pieces[BLACK][QUEEN]);
+    
+    // Kings
+    attackers |= get_king_attacks(square) & (pieces[WHITE][KING] | pieces[BLACK][KING]);
+    
+    return attackers & occ;
+}
+
+int Board::see(Move move) const {
+    int from = move.from();
+    int to = move.to();
+    int flag = move.flag();
+    
+    int us = side_to_move;
+    int them = us ^ 1;
+    
+    Piece moving_piece = board_array[from];
+    PieceType pt = (PieceType)(moving_piece % 6);
+    
+    Piece captured = (flag == FLAG_EP) ? (us == WHITE ? B_PAWN : W_PAWN) : board_array[to];
+    int cap_type = (captured != NO_PIECE) ? (captured % 6) : PAWN;
+    
+    const int piece_values[6] = { 100, 320, 330, 500, 900, 20000 };
+    
+    int gain[32];
+    gain[0] = piece_values[cap_type];
+    if (move.is_promotion()) {
+        int promo_pt = move.promotion_piece_type();
+        gain[0] += piece_values[promo_pt] - piece_values[PAWN];
+    }
+    
+    U64 occ = occupancies[BOTH];
+    clear_bit(occ, from);
+    
+    int depth = 1;
+    int active_side = them;
+    int current_piece_value = piece_values[pt];
+    
+    U64 attackers = get_all_attackers(to, occ);
+    
+    while (true) {
+        int cheapest_sq = -1;
+        int cheapest_val = 999999;
+        
+        U64 side_attackers = attackers & occupancies[active_side];
+        if (!side_attackers) break;
+        
+        U64 temp = side_attackers;
+        while (temp) {
+            int sq = pop_lsb(temp);
+            Piece p = board_array[sq];
+            int type = p % 6;
+            if (piece_values[type] < cheapest_val) {
+                cheapest_val = piece_values[type];
+                cheapest_sq = sq;
+            }
+        }
+        
+        if (cheapest_sq == -1) break;
+        
+        clear_bit(occ, cheapest_sq);
+        gain[depth] = current_piece_value;
+        current_piece_value = cheapest_val;
+        
+        if (board_array[cheapest_sq] % 6 == KING) {
+            depth++;
+            break;
+        }
+        
+        attackers = get_all_attackers(to, occ);
+        
+        active_side ^= 1;
+        depth++;
+    }
+    
+    while (--depth > 0) {
+        gain[depth - 1] = gain[depth - 1] - gain[depth];
+        if (depth - 1 > 0) {
+            gain[depth - 1] = std::max(0, gain[depth - 1]);
+        }
+    }
+    
+    return gain[0];
+}
+
+LegalityMasks Board::get_legality_masks() const {
+    LegalityMasks masks;
+    masks.checkers = 0;
+    masks.pinned = 0;
+    std::fill(std::begin(masks.pin_rays), std::end(masks.pin_rays), 0ULL);
+
+    int us = side_to_move;
+    int them = us ^ 1;
+    int king_sq = get_lsb(pieces[us][KING]);
+
+    // 1. Get checkers
+    masks.checkers = (get_knight_attacks(king_sq) & pieces[them][KNIGHT]) |
+                     (get_pawn_attacks(us, king_sq) & pieces[them][PAWN]) |
+                     (get_bishop_attacks(king_sq, occupancies[BOTH]) & (pieces[them][BISHOP] | pieces[them][QUEEN])) |
+                     (get_rook_attacks(king_sq, occupancies[BOTH]) & (pieces[them][ROOK] | pieces[them][QUEEN]));
+
+    // 2. Get pinned pieces and their pin rays
+    U64 potential_pinners = (get_bishop_attacks(king_sq, 0) & (pieces[them][BISHOP] | pieces[them][QUEEN])) |
+                            (get_rook_attacks(king_sq, 0) & (pieces[them][ROOK] | pieces[them][QUEEN]));
+
+    while (potential_pinners) {
+        int slider_sq = pop_lsb(potential_pinners);
+        U64 blockers = between_bb[king_sq][slider_sq] & occupancies[BOTH];
+        if (count_bits(blockers) == 1) {
+            int pinned_sq = get_lsb(blockers);
+            if (occupancies[us] & (1ULL << pinned_sq)) {
+                masks.pinned |= (1ULL << pinned_sq);
+                masks.pin_rays[pinned_sq] = line_bb[king_sq][slider_sq];
+            }
+        }
+    }
+
+    return masks;
+}
+
+bool Board::is_move_legal(Move move, const LegalityMasks& masks) const {
+    int from = move.from();
+    int to = move.to();
+    int flag = move.flag();
+
+    int us = side_to_move;
+    int them = us ^ 1;
+    Piece moving_piece = board_array[from];
+    PieceType pt = (PieceType)(moving_piece % 6);
+    int king_sq = get_lsb(pieces[us][KING]);
+
+    if (pt == KING) {
+        U64 temp_occ = occupancies[BOTH] ^ (1ULL << from);
+        
+        Piece captured = board_array[to];
+        int cap_type = (captured != NO_PIECE) ? (captured % 6) : -1;
+        if (cap_type != -1) {
+            temp_occ ^= (1ULL << to);
+        }
+        
+        U64 pawn_attackers = get_pawn_attacks(us, to) & pieces[them][PAWN];
+        if (pawn_attackers) return false;
+        
+        U64 knight_attackers = get_knight_attacks(to) & pieces[them][KNIGHT];
+        if (knight_attackers) return false;
+        
+        U64 bishop_attackers = get_bishop_attacks(to, temp_occ) & (pieces[them][BISHOP] | pieces[them][QUEEN]);
+        if (bishop_attackers) return false;
+        
+        U64 rook_attackers = get_rook_attacks(to, temp_occ) & (pieces[them][ROOK] | pieces[them][QUEEN]);
+        if (rook_attackers) return false;
+        
+        U64 king_attackers = get_king_attacks(to) & pieces[them][KING];
+        if (king_attackers) return false;
+        
+        return true;
+    }
+
+    if (masks.checkers) {
+        if (count_bits(masks.checkers) > 1) {
+            return false;
+        }
+        int checker_sq = get_lsb(masks.checkers);
+        U64 check_mask = (1ULL << checker_sq) | between_bb[king_sq][checker_sq];
+        if (!(check_mask & (1ULL << to))) {
+            return false;
+        }
+    }
+
+    if (masks.pinned & (1ULL << from)) {
+        if (!(masks.pin_rays[from] & (1ULL << to))) {
+            return false;
+        }
+    }
+
+    if (flag == FLAG_EP) {
+        int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
+        U64 temp_occ = occupancies[BOTH] ^ (1ULL << from) ^ (1ULL << ep_pawn_sq) ^ (1ULL << to);
+        U64 horizontal_attacks = get_rook_attacks(king_sq, temp_occ);
+        if (horizontal_attacks & (pieces[them][ROOK] | pieces[them][QUEEN])) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 
