@@ -560,7 +560,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                 // History-based LMR adjustments (quiet history + CMH + FMH)
                 int hist_score = get_quiet_history_score(board, move, ply, masks.threats);
                 int hist_adj = hist_score / Search::LMR_History_Divisor;
-                hist_adj = std::max(-2, std::min(2, hist_adj));
+                hist_adj = std::max(0, std::min(1, hist_adj));
                 reduction -= hist_adj;
                 
                 reduction = std::max(0, reduction);
@@ -840,7 +840,7 @@ namespace Search {
     int Move_Overhead = 30;
     int SyzygyProbeDepth = 1;
     bool SyzygyProbeLimit = true;
-    int LMR_History_Divisor = 8192;
+    int LMR_History_Divisor = 3000;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
