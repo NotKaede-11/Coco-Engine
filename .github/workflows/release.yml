@@ -37,9 +37,10 @@ jobs:
 
       - name: Setup Compiler (Windows)
         if: matrix.os == 'windows-latest'
-        uses: egor-tensin/setup-mingw@v2
+        uses: msys2/setup-msys2@v2
         with:
-          platform: x64
+          msystem: MINGW64
+          update: false
 
       - name: Setup Compiler (Linux)
         if: matrix.os == 'ubuntu-latest'

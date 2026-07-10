@@ -8,11 +8,13 @@ This release introduces a major suite of search, threading, and positional evalu
 
 ### Added
 - **Shared Memory Multithreading (Lazy SMP):** Spawns helper threads using independent thread-local search states and board copies while sharing a unified, lockless Transposition Table (TT). Supports up to 1024 threads via the `Threads` UCI option.
+- **Syzygy Endgame Tablebase Probing:** Re-integrated Fathom tablebase probing as a native project directory (no submodules). Supports thread-safe WDL probing at non-PV nodes and DTZ probing at the root.
 - **On-Demand Enemy Threats Heuristic:** Calculates dynamic enemy attack maps (using a kingless occupancy mask for sliders) to penalize quiet moves that step into heavily defended squares.
 - **Contextual Continuation History (CMH + FMH):** Enhances quiet move ordering by indexing history scores based on countermove (ply-1) and follow-up (ply-2) contexts.
 - **Capture History Sorting Heuristic:** Sorts tactical captures within their MVV-LVA slots using a dedicated capture history table.
 - **NNUE Brain Expansion:** Upgrades the neural network architecture support for larger network layer sizes (512/1024) to improve raw evaluation accuracy.
 - **AVX2 Vectorization:** Optimizes hot-path neural network accumulator calculations using vectorized AVX2 intrinsics.
+- **Portability & C++23 Migration:** Migrated the project standard to fully stable C++23 and replaced the experimental C++26 `#embed` preprocessor directive with a portable pre-build python hex generator (`scripts/make_nnue_header.py`). Removed Link-Time Optimization (`-flto`) on Windows to resolve binary PE header corruption and standard library compatibility issues.
 
 ### Changed
 - **UCI Version:** Updated the engine version name in the UCI handshake to `Coco v1.3.0`.
