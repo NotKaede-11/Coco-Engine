@@ -502,7 +502,6 @@ void uci_loop()
         else if (line == "quit")
         {
             stop_search();
-            tb_free();
             break;
         }
     }

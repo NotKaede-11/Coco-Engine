@@ -5,7 +5,6 @@
 #include "evaluate.h"
 #include <iostream>
 
-#include <format>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -967,22 +966,22 @@ namespace Search {
             uint64_t nps = elapsed > 0 ? (total_nodes * 1000) / elapsed : total_nodes * 1000;
 
             // Print standardized UCI info line
-            std::cout << std::format("info depth {} seldepth {} ", current_depth, total_seldepth);
+            std::cout << "info depth " << current_depth << " seldepth " << total_seldepth << " ";
 
             if (score > MATE_THRESHOLD) {
                 int plies = MATE_SCORE - score;
-                std::cout << std::format("score mate {}", (plies + 1) / 2);
+                std::cout << "score mate " << ((plies + 1) / 2);
             } else if (score < -MATE_THRESHOLD) {
                 int plies = score + MATE_SCORE;
-                std::cout << std::format("score mate -{}", (plies + 1) / 2);
+                std::cout << "score mate -" << ((plies + 1) / 2);
             } else {
-                std::cout << std::format("score cp {}", score);
+                std::cout << "score cp " << score;
             }
 
-            std::cout << std::format(" nodes {} time {} nps {} pv", total_nodes, elapsed, nps);
+            std::cout << " nodes " << total_nodes << " time " << elapsed << " nps " << nps << " pv";
 
             for (int i = 0; i < pv_len; i++) {
-                std::cout << std::format(" {}", move_to_str(pv[i]));
+                std::cout << " " << move_to_str(pv[i]);
             }
             std::cout << "\n";
 
@@ -1005,7 +1004,7 @@ namespace Search {
         }
         
         // Report final best move designation to GUI
-        std::cout << std::format("bestmove {}\n", move_to_str(last_completed_best_move));
+        std::cout << "bestmove " << move_to_str(last_completed_best_move) << "\n";
         std::cout << std::flush;
     }
 
