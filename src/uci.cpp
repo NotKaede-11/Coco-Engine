@@ -6,6 +6,7 @@
 #include "tt.h"
 #include "evaluate.h"
 #include "nnue.h"
+#include "tbprobe.h"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -379,6 +380,9 @@ void uci_loop()
             std::cout << "option name History_Threshold type spin default 16384 min 4096 max 32768\n";
             std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name EvalFile type string default coco.nnue\n";
+            std::cout << "option name SyzygyPath type string default <empty>\n";
+            std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
+            std::cout << "option name SyzygyProbeLimit type bool default true\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)
@@ -449,6 +453,22 @@ void uci_loop()
                     {
                         Search::History_Threshold = std::stoi(option_value);
                     }
+                    else if (option_name == "SyzygyPath")
+                    {
+                        if (option_value == "<empty>" || option_value.empty()) {
+                            tb_free();
+                        } else {
+                            tb_init(option_value.c_str());
+                        }
+                    }
+                    else if (option_name == "SyzygyProbeDepth")
+                    {
+                        Search::SyzygyProbeDepth = std::stoi(option_value);
+                    }
+                    else if (option_name == "SyzygyProbeLimit")
+                    {
+                        Search::SyzygyProbeLimit = (option_value == "true");
+                    }
                 }
                 catch (...)
                 {
@@ -502,6 +522,7 @@ void uci_loop()
         else if (line == "quit")
         {
             stop_search();
+            tb_free();
             break;
         }
     }

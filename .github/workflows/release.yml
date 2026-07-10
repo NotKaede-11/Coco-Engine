@@ -14,18 +14,18 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: coco-chess-linux-x64
-            build_cmd: g++ -O3 -pthread -std=c++26 src/*.cpp -o coco-chess-linux-x64
+            build_cmd: g++ -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-linux-x64
 
           - os: windows-latest
             artifact_name: coco-chess-windows-x64.exe
-            build_cmd: g++ -O3 -pthread -static -std=c++26 src/*.cpp -o coco-chess-windows-x64.exe
+            build_cmd: g++ -O3 -pthread -static -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-windows-x64.exe
 
           - os: macos-latest
             artifact_name: coco-chess-macos-universal
             # Compile Universal Binary (arm64 + x86_64) using Clang (g++ alias on macOS)
             build_cmd: |
-              g++ -target x86_64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp -o coco-chess-x86_64
-              g++ -target arm64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp -o coco-chess-arm64
+              g++ -target x86_64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-x86_64
+              g++ -target arm64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-arm64
               lipo -create coco-chess-x86_64 coco-chess-arm64 -output coco-chess-macos-universal
 
     steps:
