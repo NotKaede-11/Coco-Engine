@@ -1,6 +1,6 @@
 # Coco Chess Engine
 
-Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++17. It is designed to combine a fast, search core with a deep, position-aware neural network that evaluates the board in constant time.
+Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++26. It is designed to combine a fast, search core with a deep, position-aware neural network that evaluates the board in constant time.
 
 ## A Note on Development
 
