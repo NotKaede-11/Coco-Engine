@@ -390,3 +390,8 @@ These are additional concrete findings from a deeper scan of every engine folder
 * **LMR Adjustment via Continuation History:** Deferred to avoid search instability. Move ordering improvements are prioritized first to establish a clean, verified baseline before modifying late move reduction values.
 * **[inCheck][capture] 4-Table Split:** Deferred due to high memory footprint. Splitting continuation history into 4 tables (`[2][2]`) increases the memory cache footprint (up to ~3.1 MB per thread), adding significant cache overhead for negligible Elo gains compared to a single-sliced `[2][7][64][7][64]` table (~784 KB per thread).
 
+### 5. Established NNUE Compatibility & Local Testing Option
+* **Compatibility Reference:** Coco's neural network utilizes a standard **`768 -> 256x2 -> 1`** architecture with **SCReLU** activation (`(clamped_x * clamped_x) / 255`). This format is mathematically identical to the networks of **Leorik 2.x** and **Weiss v1.x / v2.x**.
+* **Local Strength Testing:** To evaluate Coco's search strength independent of our custom network training stage, we can locally load a trained network from **Leorik 2.1** or **Weiss** by renaming the weights file to `coco.nnue`. 
+* **Quantization Alignment:** If we load an external net and observe evaluation anomalies, we may need to write a simple conversion/rescaling script (e.g., to scale layer 1/2 weights and biases) to align their quantization constants with Coco's internal scaling factors.
+
