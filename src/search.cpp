@@ -3,11 +3,8 @@
 #include "movegen.h"
 #include "tt.h"
 #include "evaluate.h"
-#include "tbprobe.h"
 #include <iostream>
 
-// Constants for evaluation and search bounds
-const int VALUE_TB = 31000;
 #include <format>
 #include <chrono>
 #include <algorithm>
@@ -71,61 +68,6 @@ inline void update_history(int16_t& entry, int bonus) {
     int val = entry;
     val += bonus - val * std::abs(bonus) / 32768;
     entry = static_cast<int16_t>(std::clamp(val, -30000, 30000));
-}
-
-
-// Map Fathom move representation to Coco's Move class
-Move fathom_to_coco_move(const Board& board, unsigned fathom_res) {
-    int from = TB_GET_FROM(fathom_res);
-    int to = TB_GET_TO(fathom_res);
-    int promotes = TB_GET_PROMOTES(fathom_res);
-    bool ep = TB_GET_EP(fathom_res);
-    
-    bool is_cap = (board.get_piece_at(to) != NO_PIECE) || ep;
-    
-    int flags = FLAG_QUIET;
-    if (ep) {
-        flags = FLAG_EP;
-    } else if (promotes != TB_PROMOTES_NONE) {
-        int pt = KNIGHT;
-        if (promotes == TB_PROMOTES_QUEEN) pt = QUEEN;
-        else if (promotes == TB_PROMOTES_ROOK) pt = ROOK;
-        else if (promotes == TB_PROMOTES_BISHOP) pt = BISHOP;
-        
-        flags = (pt - 1) + 8;
-        if (is_cap) {
-            flags += 4;
-        }
-    } else if (is_cap) {
-        flags = FLAG_CAPTURE;
-    } else {
-        Piece p = board.get_piece_at(from);
-        if ((p == W_PAWN || p == B_PAWN) && std::abs(from - to) == 16) {
-            flags = FLAG_DOUBLE_PAWN;
-        }
-    }
-    
-    return Move(from, to, flags);
-}
-
-// Convert Coco board to Fathom bitboards and call tb_probe_wdl
-unsigned probe_wdl(const Board& board) {
-    U64 white = board.get_occupancy(WHITE);
-    U64 black = board.get_occupancy(BLACK);
-    U64 kings = board.get_pieces(WHITE, KING) | board.get_pieces(BLACK, KING);
-    U64 queens = board.get_pieces(WHITE, QUEEN) | board.get_pieces(BLACK, QUEEN);
-    U64 rooks = board.get_pieces(WHITE, ROOK) | board.get_pieces(BLACK, ROOK);
-    U64 bishops = board.get_pieces(WHITE, BISHOP) | board.get_pieces(BLACK, BISHOP);
-    U64 knights = board.get_pieces(WHITE, KNIGHT) | board.get_pieces(BLACK, KNIGHT);
-    U64 pawns = board.get_pieces(WHITE, PAWN) | board.get_pieces(BLACK, PAWN);
-    unsigned ep = board.get_en_passant_square();
-    if (ep == SQ_NONE) ep = 0;
-    bool turn = (board.get_side_to_move() == WHITE);
-    
-    unsigned castling = board.get_castling_rights();
-    unsigned rule50 = board.get_halfmove_clock();
-    
-    return tb_probe_wdl(white, black, kings, queens, rooks, bishops, knights, pawns, rule50, castling, ep, turn);
 }
 
 
@@ -283,45 +225,6 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     
     if (depth <= 0) {
         return quiescence(board, alpha, beta, ply);
-    }
-    
-    // Syzygy WDL Probing at non-root nodes
-    int num_pieces = count_bits(board.get_occupancy(BOTH));
-    if (TB_LARGEST > 0 
-        && num_pieces <= (int)TB_LARGEST 
-        && ply > 0 
-        && board.get_castling_rights() == 0 
-        && board.get_halfmove_clock() == 0 
-        && excluded_move.is_none()
-        && (num_pieces < (int)TB_LARGEST || !Search::SyzygyProbeLimit || depth >= Search::SyzygyProbeDepth)) 
-    {
-        unsigned wdl = probe_wdl(board);
-        if (wdl != TB_RESULT_FAILED) {
-            int tb_score = 0;
-            if (wdl == TB_WIN) {
-                tb_score = VALUE_TB - ply;
-            } else if (wdl == TB_CURSED_WIN) {
-                tb_score = 1;
-            } else if (wdl == TB_DRAW) {
-                tb_score = 0;
-            } else if (wdl == TB_BLESSED_LOSS) {
-                tb_score = -1;
-            } else if (wdl == TB_LOSS) {
-                tb_score = -VALUE_TB + ply;
-            }
-            
-            uint8_t flag = HASH_EXACT;
-            if (tb_score >= beta) {
-                flag = HASH_BETA;
-            } else if (tb_score <= alpha) {
-                flag = HASH_ALPHA;
-            }
-            
-            if (excluded_move.is_none()) {
-                tt.store(board.get_hash_key(), Move(), tb_score, depth, flag, ply);
-            }
-            return tb_score;
-        }
     }
     
     Color us = board.get_side_to_move();
@@ -830,8 +733,6 @@ namespace Search {
     int Aspiration_Delta = 18;
     int History_Threshold = 16367;
     int Move_Overhead = 30;
-    int SyzygyProbeDepth = 1;
-    bool SyzygyProbeLimit = true;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
@@ -936,59 +837,6 @@ namespace Search {
             }
         }
 
-        // Syzygy DTZ Probing at the root
-        int num_pieces = count_bits(board.get_occupancy(BOTH));
-        if (TB_LARGEST > 0 && num_pieces <= (int)TB_LARGEST && board.get_castling_rights() == 0) {
-            unsigned results[TB_MAX_MOVES];
-            U64 white = board.get_occupancy(WHITE);
-            U64 black = board.get_occupancy(BLACK);
-            U64 kings = board.get_pieces(WHITE, KING) | board.get_pieces(BLACK, KING);
-            U64 queens = board.get_pieces(WHITE, QUEEN) | board.get_pieces(BLACK, QUEEN);
-            U64 rooks = board.get_pieces(WHITE, ROOK) | board.get_pieces(BLACK, ROOK);
-            U64 bishops = board.get_pieces(WHITE, BISHOP) | board.get_pieces(BLACK, BISHOP);
-            U64 knights = board.get_pieces(WHITE, KNIGHT) | board.get_pieces(BLACK, KNIGHT);
-            U64 pawns = board.get_pieces(WHITE, PAWN) | board.get_pieces(BLACK, PAWN);
-            unsigned ep = board.get_en_passant_square();
-            if (ep == SQ_NONE) ep = 0;
-            bool turn = (board.get_side_to_move() == WHITE);
-            unsigned rule50 = board.get_halfmove_clock();
-            
-            unsigned res = tb_probe_root(white, black, kings, queens, rooks, bishops, knights, pawns, rule50, 0, ep, turn, results);
-            if (res != TB_RESULT_FAILED && res != TB_RESULT_CHECKMATE && res != TB_RESULT_STALEMATE) {
-                Move tb_move = fathom_to_coco_move(board, res);
-                bool is_legal = false;
-                LegalityMasks masks = board.get_legality_masks();
-                for (int i = 0; i < root_list.count; i++) {
-                    if (root_list.moves[i] == tb_move && board.is_move_legal(tb_move, masks)) {
-                        is_legal = true;
-                        break;
-                    }
-                }
-                
-                if (is_legal) {
-                    unsigned wdl = TB_GET_WDL(res);
-                    unsigned dtz = TB_GET_DTZ(res);
-                    int tb_score = 0;
-                    if (wdl == TB_WIN) {
-                        tb_score = VALUE_TB - dtz - rule50;
-                    } else if (wdl == TB_CURSED_WIN) {
-                        tb_score = 1;
-                    } else if (wdl == TB_DRAW) {
-                        tb_score = 0;
-                    } else if (wdl == TB_BLESSED_LOSS) {
-                        tb_score = -1;
-                    } else if (wdl == TB_LOSS) {
-                        tb_score = -VALUE_TB + dtz + rule50;
-                    }
-                    
-                    std::cout << std::format("info depth 1 score cp {} nodes 1 nps 1000 pv {}\n", tb_score, move_to_str(tb_move));
-                    std::cout << std::format("bestmove {}\n", move_to_str(tb_move));
-                    std::cout << std::flush;
-                    return;
-                }
-            }
-        }
-        
         Move best_move;
         Move last_completed_best_move;
         Move previous_best_move = Move();

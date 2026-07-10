@@ -26,7 +26,6 @@ To evaluate millions of positions per second, Coco uses an aggressive suite of p
 *   **Reductions & Ordering**: The engine uses Late Move Reductions (LMR) for quiet moves, while prioritizing "Killer", "History", "Contextual Continuation History (CMH + FMH)", and "Capture History" moves.
 *   **On-Demand Threats**: Dynamic enemy attack maps penalize quiet moves stepping into heavily defended lines.
 *   **Lazy SMP Multithreading**: Spawns multiple worker threads sharing a lockless Transposition Table (TT) for scale.
-*   **Syzygy Tablebase Probing**: Integrates WDL and DTZ tablebase probing using Fathom.
 *   **Iterative Deepening**: Coco searches incrementally, ensuring the Transposition Table is primed with the best moves before deeper, more exhaustive searches begin.
 *   **Aspiration Windows**: The engine uses a narrow scoring window to focus the search. If a score fails to fit within this window, the engine dynamically widens it and re-searches.
 
@@ -47,7 +46,7 @@ I developed an Elastic Clock for Coco to handle time pressure smartly:
 
 ## UCI Support
 
-Coco communicates via the standard UCI (Universal Chess Interface) protocol. You can adjust the Hash size, control Threads, swap evaluating weights file (`EvalFile`), configure tablebases (`SyzygyPath`), or tweak the search parameters directly through your GUI's settings.
+Coco communicates via the standard UCI (Universal Chess Interface) protocol. You can adjust the Hash size, control Threads, swap evaluating weights file (`EvalFile`), or tweak the search parameters directly through your GUI's settings.
 
 ## How to Compile
 
@@ -60,25 +59,25 @@ build.bat
 ```
 This compiles the engine with optimized compiler flags and links the C++ runtime libraries statically. Alternatively, you can compile manually by running:
 ```bash
-g++ -O3 -march=native -flto -pthread -static -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess.exe
+g++ -O3 -march=native -flto -pthread -static -std=c++26 src/*.cpp -o coco-chess.exe
 ```
 
 ### Linux
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
+g++ -O3 -flto -pthread -std=c++26 src/*.cpp -o coco-chess
 ```
 
 ### macOS (Intel)
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
+g++ -O3 -flto -pthread -std=c++26 src/*.cpp -o coco-chess
 ```
 
 ### macOS (Apple Silicon M1/M2/M3)
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 -D__ARM_NEON src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
+g++ -O3 -flto -pthread -std=c++26 -D__ARM_NEON src/*.cpp -o coco-chess
 ```
 
 Once compiled, you can run the engine executable and interact with it using standard UCI commands, or load it into any chess GUI (such as Cutechess, Arena, or Lichess-bot).

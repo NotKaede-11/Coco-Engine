@@ -33,8 +33,6 @@ namespace Search {
     extern int Aspiration_Delta;
     extern int History_Threshold;
     extern int Move_Overhead;
-    extern int SyzygyProbeDepth;
-    extern bool SyzygyProbeLimit;
 
     // Initialize search-related tables (like LMR lookup table)
     void init_search_tables();
