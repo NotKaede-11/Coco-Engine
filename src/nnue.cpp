@@ -161,12 +161,25 @@ void NNUEEvaluator::load_embedded_network() {
 }
 
 void NNUEEvaluator::init_accumulator(const Board& board, Accumulator& acc) const {
-    // Set all elements of both accumulators to layer 1 biases in aligned chunks of 16 (256-bit)
+    // Set all elements of both accumulators to layer 1 biases in aligned chunks
+#if defined(__AVX2__)
     for (int i = 0; i < L1_SIZE; i += 16) {
         __m256i bias = _mm256_load_si256((const __m256i*)&layer1_biases[i]);
         _mm256_store_si256((__m256i*)&acc.v[WHITE][i], bias);
         _mm256_store_si256((__m256i*)&acc.v[BLACK][i], bias);
     }
+#elif defined(__ARM_NEON)
+    for (int i = 0; i < L1_SIZE; i += 8) {
+        int16x8_t bias = vld1q_s16(&layer1_biases[i]);
+        vst1q_s16(&acc.v[WHITE][i], bias);
+        vst1q_s16(&acc.v[BLACK][i], bias);
+    }
+#else
+    for (int i = 0; i < L1_SIZE; ++i) {
+        acc.v[WHITE][i] = layer1_biases[i];
+        acc.v[BLACK][i] = layer1_biases[i];
+    }
+#endif
 
     // Iterate through all 64 squares of the board and activate active features
     for (int sq = 0; sq < 64; ++sq) {
@@ -182,6 +195,7 @@ void NNUEEvaluator::init_accumulator(const Board& board, Accumulator& acc) const
         const int16_t* w_weights = layer1_weights[idx_w];
         const int16_t* b_weights = layer1_weights[idx_b];
 
+#if defined(__AVX2__)
         for (int i = 0; i < L1_SIZE; i += 16) {
             __m256i w_acc = _mm256_load_si256((const __m256i*)&acc.v[WHITE][i]);
             __m256i w_val = _mm256_load_si256((const __m256i*)&w_weights[i]);
@@ -191,11 +205,28 @@ void NNUEEvaluator::init_accumulator(const Board& board, Accumulator& acc) const
             __m256i b_val = _mm256_load_si256((const __m256i*)&b_weights[i]);
             _mm256_store_si256((__m256i*)&acc.v[BLACK][i], _mm256_add_epi16(b_acc, b_val));
         }
+#elif defined(__ARM_NEON)
+        for (int i = 0; i < L1_SIZE; i += 8) {
+            int16x8_t w_acc = vld1q_s16(&acc.v[WHITE][i]);
+            int16x8_t w_val = vld1q_s16(&w_weights[i]);
+            vst1q_s16(&acc.v[WHITE][i], vaddq_s16(w_acc, w_val));
+
+            int16x8_t b_acc = vld1q_s16(&acc.v[BLACK][i]);
+            int16x8_t b_val = vld1q_s16(&b_weights[i]);
+            vst1q_s16(&acc.v[BLACK][i], vaddq_s16(b_acc, b_val));
+        }
+#else
+        for (int i = 0; i < L1_SIZE; ++i) {
+            acc.v[WHITE][i] += w_weights[i];
+            acc.v[BLACK][i] += b_weights[i];
+        }
+#endif
     }
 }
 
-// Helper function to evaluate one perspective of the accumulator using AVX2 with aligned memory.
+// Helper function to evaluate one perspective of the accumulator using SIMD or C++ fallback.
 static inline int32_t evaluate_one_perspective(const int16_t* acc_v, const int16_t* weights) {
+#if defined(__AVX2__)
     __m256i sum = _mm256_setzero_si256();
     __m256i zero = _mm256_setzero_si256();
     __m256i max_val = _mm256_set1_epi32(255);
@@ -233,6 +264,45 @@ static inline int32_t evaluate_one_perspective(const int16_t* acc_v, const int16
     alignas(32) int32_t temp[8];
     _mm256_store_si256((__m256i*)temp, sum);
     return temp[0] + temp[1] + temp[2] + temp[3] + temp[4] + temp[5] + temp[6] + temp[7];
+
+#elif defined(__ARM_NEON)
+    int32x4_t sum = vdupq_n_s32(0);
+    int16x8_t zero = vdupq_n_s16(0);
+    int16x8_t max_val = vdupq_n_s16(255);
+    int32x4_t magic = vdupq_n_s32(32897);
+
+    for (int i = 0; i < L1_SIZE; i += 8) {
+        int16x8_t val8 = vld1q_s16(acc_v + i);
+        int16x8_t clamped = vmaxq_s16(vminq_s16(val8, max_val), zero);
+
+        int16x4_t clamped_lo = vget_low_s16(clamped);
+        int16x4_t clamped_hi = vget_high_s16(clamped);
+        int32x4_t sq_lo = vmull_s16(clamped_lo, clamped_lo);
+        int32x4_t sq_hi = vmull_s16(clamped_hi, clamped_hi);
+
+        int32x4_t div_lo = vshrq_n_s32(vmulq_s32(sq_lo, magic), 23);
+        int32x4_t div_hi = vshrq_n_s32(vmulq_s32(sq_hi, magic), 23);
+
+        int16x8_t w8 = vld1q_s16(weights + i);
+        int32x4_t w_lo = vmovl_s16(vget_low_s16(w8));
+        int32x4_t w_hi = vmovl_s16(vget_high_s16(w8));
+
+        sum = vaddq_s32(sum, vmulq_s32(div_lo, w_lo));
+        sum = vaddq_s32(sum, vmulq_s32(div_hi, w_hi));
+    }
+    return vgetq_lane_s32(sum, 0) + vgetq_lane_s32(sum, 1) + vgetq_lane_s32(sum, 2) + vgetq_lane_s32(sum, 3);
+
+#else
+    int32_t sum = 0;
+    for (int i = 0; i < L1_SIZE; ++i) {
+        int32_t val = acc_v[i];
+        if (val < 0) val = 0;
+        else if (val > 255) val = 255;
+        int32_t acrelu = (val * val) / 255;
+        sum += acrelu * weights[i];
+    }
+    return sum;
+#endif
 }
 
 int NNUEEvaluator::evaluate_nnue(const Board& board) const {

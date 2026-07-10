@@ -1,0 +1,103 @@
+name: Build & Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build & Publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: coco-chess-linux-x64
+            build_cmd: g++ -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-linux-x64
+
+          - os: windows-latest
+            artifact_name: coco-chess-windows-x64.exe
+            build_cmd: g++ -O3 -flto -pthread -static -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-windows-x64.exe
+
+          - os: macos-latest
+            artifact_name: coco-chess-macos-universal
+            # Compile Universal Binary (arm64 + x86_64) using Clang (g++ alias on macOS)
+            build_cmd: |
+              g++ -target x86_64-apple-macos11 -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-x86_64
+              g++ -target arm64-apple-macos11 -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-arm64
+              lipo -create coco-chess-x86_64 coco-chess-arm64 -output coco-chess-macos-universal
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Compiler (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      - name: Setup Compiler (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Run Build Command
+        run: ${{ matrix.build_cmd }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: coco-chess-windows-x64.exe
+          path: ./dist/
+
+      - name: Download Linux Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: coco-chess-linux-x64
+          path: ./dist/
+
+      - name: Download macOS Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: coco-chess-macos-universal
+          path: ./dist/
+
+      - name: Copy NNUE File
+        run: cp coco.nnue ./dist/
+
+      - name: Create Release Notes
+        run: |
+          echo "### Coco Chess Engine Release ${{ github.ref_name }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "Please ensure the engine binary and the neural network weights file (\`coco.nnue\`) are placed in the same folder." >> release_notes.md
+          echo "" >> release_notes.md
+          echo "See the [CHANGELOG.md](https://github.com/NotKaede-11/Coco-Engine/blob/main/CHANGELOG.md) for full change lists." >> release_notes.md
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./dist/coco-chess-windows-x64.exe
+            ./dist/coco-chess-linux-x64
+            ./dist/coco-chess-macos-universal
+            ./dist/coco.nnue
+          body_path: release_notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

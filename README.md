@@ -63,10 +63,22 @@ This compiles the engine with optimized compiler flags and links the C++ runtime
 g++ -O3 -march=native -flto -pthread -static -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess.exe
 ```
 
-### Linux / macOS
+### Linux
 Open your terminal in the project directory and run:
 ```bash
 g++ -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
+```
+
+### macOS (Intel)
+Open your terminal in the project directory and run:
+```bash
+g++ -O3 -flto -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
+```
+
+### macOS (Apple Silicon M1/M2/M3)
+Open your terminal in the project directory and run:
+```bash
+g++ -O3 -flto -pthread -std=c++26 -D__ARM_NEON src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
 ```
 
 Once compiled, you can run the engine executable and interact with it using standard UCI commands, or load it into any chess GUI (such as Cutechess, Arena, or Lichess-bot).
