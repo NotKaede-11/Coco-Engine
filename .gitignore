@@ -20,14 +20,7 @@ scripts/
 bullet/
 backups/
 books/
-meowshatranj/
-Ethereal/
-stockfish/
 tournament_settings/
-Leorik/
-weiss/
-Pyrrhic/
-nnue-tools/
 .agents/
 
 # === Other Untracked Development Files ===

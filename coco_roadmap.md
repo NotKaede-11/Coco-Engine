@@ -177,7 +177,7 @@ To keep the neural network aligned with our search changes, we will rebuild and 
 * `[X]` **Razoring `[SPSA]` `[SPRT]`:** Depth-1 validation exit gate that drops hopeless quiet nodes directly to Quiescence Search to avoid movegen overhead.
 * `[X]` **Futility Pruning `[SPSA]` `[SPRT]`:** Dropping remaining quiet move lists at low depths if the static evaluation plus a safety cushion cannot reach alpha.
 * `[X]` **Move Count Based Pruning (LMP) `[SPSA]` `[SPRT]`:** Dropping calculations entirely after a specific threshold of quiet moves has been generated and failed at a node.
-* `[X]` **Static Exchange Evaluation (SEE) `[SPRT]`:** Evaluating the material balance of capture sequences on a single square using a fast point system to prune obviously losing tactical trades before they touch search. _(References: [Leorik/Leorik.Test/see.epd](Leorik/Leorik.Test/see.epd), [Ethereal/src/position.c](Ethereal/src/position.c), [weiss/src/search.cpp](weiss/src/search.cpp))_
+* `[X]` **Static Exchange Evaluation (SEE) `[SPRT]`:** Evaluating the material balance of capture sequences on a single square using a fast point system to prune obviously losing tactical trades before they touch search. _(References: [Leorik/Leorik.Test/see.epd](Leorik/Leorik.Test/see.epd), [Ethereal/src/board.c](Ethereal/src/board.c), [weiss/src/search.c](weiss/src/search.c))_
 * `[X]` **Safe QS Futility Pruning `[SPRT]`:** Pruning quiet captures in Quiescence Search with safety guards (only after searching the best 2 captures, using a wide 350 cp margin, and excluding promotions). Passed SPRT with +61.71 ELO!
 * `[X]` **Internal Iterative Reductions (IIR) `[SPRT]`:** Reducing nominal depth allocations on PV nodes that present a total Transposition Table cache miss at depth >= 3. Achieved massive branch reduction, passing SPRT with +99 ELO!
 * `[X]` **Improving Heuristic Logic `[SPSA]` `[SPRT]`:** Dynamically scaling RFP margins and LMR reductions based on whether our position has improved relative to 2 plies ago. Passed SPRT with +57.75 ELO!
@@ -198,7 +198,7 @@ To keep the neural network aligned with our search changes, we will rebuild and 
 * `[X]` **On-Demand Enemy Threats Bitboard `[SPRT]`:** Integrating quick, non-incremental attack maps generated from scratch to actively penalize quiet moves stepping into heavily defended enemy fire zones. _(Reference: [meowshatranj/src/position.rs](meowshatranj/src/position.rs#L550) using kingless_occ)_
 * `[X]` **Contextual Continuation History (CMH + FMH) `[SPSA]` `[SPRT]`:** Linking history table indexing to structural pairs of moves (Countermove and Follow-up configurations) to enhance deep quiet path sorting stability.
 * `[X]` **Capture History Sorting Heuristic `[SPSA]` `[SPRT]`:** Isolating non-winning and losing tactical captures into an independent heuristic table to refine Quiescence and PVS sorting accuracy.
-* `[X]` **Syzygy Endgame Tablebases `[PROGTEST]`:** Connecting direct file stream hooks to `.rtbw` and `.rtbz` data tables to instantly pull exact mathematical win, loss, or draw vectors for 3, 4, or 5 piece endgames. _(References: [Pyrrhic/](Pyrrhic/), [Fathom/](Fathom/))_
+* `[X]` **Syzygy Endgame Tablebases `[PROGTEST]`**: Connecting direct file stream hooks to `.rtbw` and `.rtbz` data tables to instantly pull exact mathematical win, loss, or draw vectors for 3, 4, or 5 piece endgames. _(References: [Fathom/](Fathom/))_
 
 ---
 
@@ -232,7 +232,7 @@ These notes are logic-only references from the other engine folders in this work
 - `[X]` **On-Demand Enemy Threats Bitboard:** Ethereal and Weiss both keep threat information cached for eval and legality, while meowshatranj recomputes threats from a kingless occupancy mask for sliders. The useful concept is one cheap cached threat board plus a clear recompute path for king-safety-sensitive positions.
 - `[X]` **Contextual Continuation History (CMH + FMH):** Leorik's counter/follow-up move ordering and Stockfish's continuation history types both point to the same structure: keep move-pair history separate from killer history so the table captures context instead of just raw move identity.
 - `[X]` **Capture History Sorting Heuristic:** Leorik explicitly excludes captures from killer/counter/follow-up tracking, which supports a separate capture-history table. That keeps quiet-move learning clean and lets tactical move ordering evolve independently.
-- `[X]` **Syzygy Endgame Tablebases:** Stockfish, Pyrrhic, Fathom, and Weiss all agree on the key integration shape: a thin tablebase adapter with explicit WDL/DTZ probing, rule-50 handling, and root-move preselection. The roadmap should keep this as an interface problem, not as a search rewrite.
+- `[X]` **Syzygy Endgame Tablebases:** Stockfish, Fathom, and Weiss all agree on the key integration shape: a thin tablebase adapter with explicit WDL/DTZ probing, rule-50 handling, and root-move preselection. The roadmap should keep this as an interface problem, not as a search rewrite.
 
 ### Tier 6
 
@@ -306,12 +306,12 @@ These are additional concrete findings from a deeper scan of every engine folder
   - **Leorik:** not implemented — captures ordered by MVV-LVA only. A gap that confirms Coco's separate capture-history table is the right direction.
 
 - **Syzygy Endgame Tablebases:**
-  - **Fathom vs Pyrrhic (design choice):** Fathom is batteries-included (own movegen/attacks, inline guards rejecting `castling≠0 || rule50≠0`, computes `tbScore` + PVs + DTM expansion); Pyrrhic is a thin probe expecting the engine to supply attack macros and enforce preconditions, returns ranks only (`TbRootMove{move, tbRank}`). Both share the identical Syzygy algorithm core.
-  - **Probe preconditions (critical):** in-search WDL probe only when `pieces ≤ TB_LARGEST` AND `rule50==0` AND `no castling rights`. Root DTZ probe may pass rule50 through. Fathom's inline wrapper enforces this; Pyrrhic leaves it to the engine.
+  - **Fathom Integration:** Fathom is batteries-included (possesses its own internal movegen/attacks, inline guards rejecting `castling≠0 || rule50≠0`, and computes `tbScore` + PVs + DTM expansion).
+  - **Probe preconditions (critical):** in-search WDL probe only when `pieces ≤ TB_LARGEST` AND `rule50==0` AND `no castling rights`. Root DTZ probe may pass rule50 through. Fathom's inline wrapper enforces this.
   - **`dtz_to_wdl` threshold = 100** (`dtz>0 → dtz+cnt50<=100 ? WIN : CURSED_WIN`). `WdlToDtz={-1,-101,0,101,1}` for zeroing-move DTZ derivation.
   - **Root move ranking (Fathom `tbprobe.c:2387-2389`):** win → `dtz+cnt50<=99 && !hasRepeated ? 1000 : 1000-(dtz+cnt50)`; loss → `-dtz*2+cnt50<100 ? -1000 : -1000+(-dtz+cnt50)`; draw → 0. The `hasRepeated` flag downgrades guaranteed wins when repetition is possible.
   - **Stockfish integration (`search.cpp:802-854`, `tbprobe.cpp:1603-1676`):** WDL probed at non-root leaf nodes; maps to `±(VALUE_TB - ply)` with `drawScore = useRule50 ? 1 : 0`; writes TT and returns if exact or fails high/low. Root `rank_root_moves` disables in-search probing (`config.cardinality = 0`) if DTZ available or already winning.
-  - **Ethereal/Weiss wrappers** over Pyrrhic: depth gate only blocks the *largest* TB below `TB_PROBE_DEPTH` so smaller TBs are always probed; PvNode clamps `syzygyMin/syzygyMax`; DTZ drives root move selection only when `!limitedByMoves && multiPV==1`.
+  - **Ethereal/Weiss wrappers:** depth gate only blocks the *largest* TB below `TB_PROBE_DEPTH` so smaller TBs are always probed; PvNode clamps `syzygyMin/syzygyMax`; DTZ drives root move selection only when `!limitedByMoves && multiPV==1`.
   - **Interface-first principle (reaffirmed):** keep this as a thin adapter (WDL/DTZ probe + rule50 + root preselection), not a search rewrite.
 
 ### Tier 6
