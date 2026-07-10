@@ -14,23 +14,26 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: coco-chess-linux-x64
-            build_cmd: g++-14 -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-linux-x64
+            build_cmd: g++ -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-linux-x64
 
           - os: windows-latest
             artifact_name: coco-chess-windows-x64.exe
-            build_cmd: g++ -O3 -pthread -static -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-windows-x64.exe
+            build_cmd: g++ -O3 -pthread -static -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-windows-x64.exe
 
           - os: macos-latest
             artifact_name: coco-chess-macos-universal
             # Compile Universal Binary (arm64 + x86_64) using Clang (g++ alias on macOS)
             build_cmd: |
-              g++ -target x86_64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-x86_64
-              g++ -target arm64-apple-macos11 -O3 -pthread -std=c++26 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-arm64
+              g++ -target x86_64-apple-macos11 -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-x86_64
+              g++ -target arm64-apple-macos11 -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-arm64
               lipo -create coco-chess-x86_64 coco-chess-arm64 -output coco-chess-macos-universal
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Generate Embedded NNUE Header
+        run: python scripts/make_nnue_header.py
 
       - name: Setup Compiler (Windows)
         if: matrix.os == 'windows-latest'
@@ -42,7 +45,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-14
+          sudo apt-get install -y build-essential
 
       - name: Run Build Command
         run: ${{ matrix.build_cmd }}

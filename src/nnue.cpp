@@ -26,9 +26,9 @@ static std::string get_executable_directory() {
 }
 #endif
 
-// Embedded network weights using C++26 #embed
+// Embedded network weights using generated hex dump header
 alignas(32) static const uint8_t raw_nnue_data[] = {
-    #embed "../coco.nnue"
+#include "nnue_data.h"
 };
 
 // Global NNUE evaluator instance

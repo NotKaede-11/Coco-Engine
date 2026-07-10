@@ -40,3 +40,7 @@ tune_30k.py
 tune_smoke_test.py
 tune_smoke_test.bat
 fastchess_help.md
+
+# === Generated NNUE Data Header ===
+src/nnue_data.h
+

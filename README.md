@@ -1,6 +1,6 @@
 # Coco Chess Engine
 
-Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++26. It is designed to combine a fast, search core with a deep, position-aware neural network that evaluates the board in constant time.
+Coco is a high-performance, neural-network-evaluated (NNUE) chess engine written in C++23. It is designed to combine a fast, search core with a deep, position-aware neural network that evaluates the board in constant time.
 
 ## A Note on Development
 
@@ -57,27 +57,31 @@ The recommended way to compile on Windows is to run the provided batch file in t
 ```cmd
 build.bat
 ```
-This compiles the engine with optimized compiler flags and links the C++ runtime libraries statically. Alternatively, you can compile manually by running:
+This automatically generates the embedded network header and compiles the engine. Alternatively, you can compile manually by running:
 ```bash
-g++ -O3 -march=native -flto -pthread -static -std=c++26 src/*.cpp -o coco-chess.exe
+python scripts/make_nnue_header.py
+g++ -O3 -march=native -pthread -static -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess.exe
 ```
 
 ### Linux
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 src/*.cpp -o coco-chess
+python scripts/make_nnue_header.py
+g++ -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
 ```
 
 ### macOS (Intel)
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 src/*.cpp -o coco-chess
+python scripts/make_nnue_header.py
+g++ -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
 ```
 
 ### macOS (Apple Silicon M1/M2/M3)
 Open your terminal in the project directory and run:
 ```bash
-g++ -O3 -flto -pthread -std=c++26 -D__ARM_NEON src/*.cpp -o coco-chess
+python scripts/make_nnue_header.py
+g++ -O3 -pthread -std=c++23 -D__ARM_NEON src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess
 ```
 
 Once compiled, you can run the engine executable and interact with it using standard UCI commands, or load it into any chess GUI (such as Cutechess, Arena, or Lichess-bot).
