@@ -2,6 +2,7 @@
 #define NNUE_H
 
 #include "board.h"
+#include "types.h"
 #include <string>
 #include <cstdint>
 #include <immintrin.h>
@@ -28,13 +29,10 @@ class NNUEEvaluator {
 public:
     NNUEEvaluator();
 
-    // Loads the quantized NNUE weights and biases from a binary file.
-    // Verifies that the file size is exactly 394,244 bytes.
+    // Loads neural network weights from a file
     bool load_network(const std::string& filename);
 
-    // Performs the forward pass evaluation of the neural network
-    // using the pre-calculated accumulator state and returns a score
-    // in centipawns relative to the side to move.
+    // Evaluates the board position from scratch using NNUE.
     int evaluate_nnue(const Board& board) const;
 
     // Initializes the accumulator state from scratch for a given board position.
@@ -43,24 +41,32 @@ public:
     // Incremental activation helper
     inline void accumulator_activate(Accumulator& acc, int side, int feature_index) const {
         const int16_t* weights = layer1_weights[feature_index];
-        for (int i = 0; i < 256; ++i) {
-            acc.v[side][i] += weights[i];
+        for (int i = 0; i < L1_SIZE; i += 16) {
+            __m256i acc_val = _mm256_load_si256((const __m256i*)&acc.v[side][i]);
+            __m256i w_val = _mm256_load_si256((const __m256i*)&weights[i]);
+            __m256i res = _mm256_add_epi16(acc_val, w_val);
+            _mm256_store_si256((__m256i*)&acc.v[side][i], res);
         }
     }
 
     // Incremental deactivation helper
     inline void accumulator_deactivate(Accumulator& acc, int side, int feature_index) const {
         const int16_t* weights = layer1_weights[feature_index];
-        for (int i = 0; i < 256; ++i) {
-            acc.v[side][i] -= weights[i];
+        for (int i = 0; i < L1_SIZE; i += 16) {
+            __m256i acc_val = _mm256_load_si256((const __m256i*)&acc.v[side][i]);
+            __m256i w_val = _mm256_load_si256((const __m256i*)&weights[i]);
+            __m256i res = _mm256_sub_epi16(acc_val, w_val);
+            _mm256_store_si256((__m256i*)&acc.v[side][i], res);
         }
     }
 
 private:
-    // NNUE Model parameters (matching the 394,756-byte binary layout)
-    int16_t layer1_weights[768][256];
-    int16_t layer1_biases[256];
-    int16_t layer2_weights[512];
+    void load_embedded_network();
+
+    // NNUE Model parameters
+    alignas(32) int16_t layer1_weights[768][L1_SIZE];
+    alignas(32) int16_t layer1_biases[L1_SIZE];
+    alignas(32) int16_t layer2_weights[2 * L1_SIZE];
     int32_t layer2_bias;
 };
 

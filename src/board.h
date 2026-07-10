@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-struct Accumulator {
-    int16_t v[2][256];
+struct alignas(32) Accumulator {
+    int16_t v[2][L1_SIZE];
 };
 
 // Structure to store information needed to restore board state in unmake_move
@@ -23,6 +23,7 @@ struct LegalityMasks {
     U64 checkers;
     U64 pinned;
     U64 pin_rays[64];
+    U64 threats;  // All squares attacked by the opponent
 };
 
 class Board {

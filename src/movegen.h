@@ -41,6 +41,14 @@ inline U64 get_pawn_attacks(int color, int square) {
     return pawn_attacks[color][square];
 }
 
+inline U64 pawn_attacks_white(U64 pawns) {
+    return ((pawns & ~0x0101010101010101ULL) << 7) | ((pawns & ~0x8080808080808080ULL) << 9);
+}
+
+inline U64 pawn_attacks_black(U64 pawns) {
+    return ((pawns & ~0x8080808080808080ULL) >> 7) | ((pawns & ~0x0101010101010101ULL) >> 9);
+}
+
 inline U64 get_knight_attacks(int square) {
     return knight_attacks[square];
 }

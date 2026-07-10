@@ -4,6 +4,12 @@
 #include <cstdint>
 #include <string>
 
+// Compile-time option to change hidden layer size (e.g., 256, 512, 1024)
+constexpr int L1_SIZE = 256;
+
+// Maximum number of search threads for Lazy SMP
+constexpr int MAX_THREADS = 256;
+
 // 64-bit unsigned integer for bitboards
 using U64 = uint64_t;
 

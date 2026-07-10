@@ -2,6 +2,23 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [1.3.0] - 2026-07-10
+
+This release introduces a major suite of search, threading, and positional evaluation upgrades. All features have been verified for correctness and stability under extensive search matching and test suites.
+
+### Added
+- **Shared Memory Multithreading (Lazy SMP):** Spawns helper threads using independent thread-local search states and board copies while sharing a unified, lockless Transposition Table (TT). Supports up to 1024 threads via the `Threads` UCI option.
+- **Syzygy Endgame Tablebases Integration:** Integrates WDL (Win-Draw-Loss) and DTZ (Distance-to-Zero) tablebases using the permissive Fathom library. Probes WDL inside search with Ethereal/Weiss-style depth-gating and DTZ at the root for immediate optimal play.
+- **On-Demand Enemy Threats Heuristic:** Calculates dynamic enemy attack maps (using a kingless occupancy mask for sliders) to penalize quiet moves that step into heavily defended squares.
+- **Contextual Continuation History (CMH + FMH):** Enhances quiet move ordering by indexing history scores based on countermove (ply-1) and follow-up (ply-2) contexts.
+- **Capture History Sorting Heuristic:** Sorts tactical captures within their MVV-LVA slots using a dedicated capture history table.
+- **NNUE Brain Expansion:** Upgrades the neural network architecture support for larger network layer sizes (512/1024) to improve raw evaluation accuracy.
+- **AVX2 Vectorization:** Optimizes hot-path neural network accumulator calculations using vectorized AVX2 intrinsics.
+
+### Changed
+- **Build Configuration:** Added Fathom source compilation (`Fathom/src/tbprobe.c` and `-IFathom/src` flags) to `build.bat` to compile tablebases inline.
+- **UCI Version:** Updated the engine version name in the UCI handshake to `Coco v1.3.0`.
+
 ## [1.1.1] - 2026-07-09
 
 ### Added

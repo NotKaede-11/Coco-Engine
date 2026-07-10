@@ -300,12 +300,33 @@ void datagen_worker(long long target, std::string output_path, int thread_id) {
 
 void run_datagen(long long target_positions, int num_threads, const std::string& output_path) {
     auto start_time = std::chrono::high_resolution_clock::now();
+    
+    // Check if file already exists and determine resume offset
+    long long existing_positions = 0;
+    std::ifstream in_file(output_path, std::ios::binary | std::ios::ate);
+    if (in_file.is_open()) {
+        std::streampos size = in_file.tellg();
+        existing_positions = size / sizeof(BulletChessBoard);
+        in_file.close();
+    }
+
+    global_positions_saved.store(existing_positions, std::memory_order_relaxed);
+
     std::cout << "[Datagen] Configuration Rule Stacked -> Target: " << target_positions 
               << " | Active Worker Threads: " << num_threads << std::endl;
+
+    if (existing_positions > 0) {
+        std::cout << "[Datagen] Resuming from existing file. Detected " << existing_positions 
+                  << " positions already saved." << std::endl;
+        if (existing_positions >= target_positions) {
+            std::cout << "[Datagen] Target already achieved!" << std::endl;
+            return;
+        }
+    }
               
     // Ensure search timeout does not trigger
     Search::target_time = 0;
-    Search::b_abort = false;
+    Search::b_abort.store(false, std::memory_order_relaxed);
 
     std::vector<std::thread> workers;
     
@@ -314,7 +335,7 @@ void run_datagen(long long target_positions, int num_threads, const std::string&
         workers.emplace_back(datagen_worker, target_positions, output_path, i);
     }
     
-    long long last_reported_positions = 0;
+    long long last_reported_positions = existing_positions;
     // Main thread reporting loop monitors execution state metrics
     while (global_positions_saved.load() < target_positions) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -324,7 +345,7 @@ void run_datagen(long long target_positions, int num_threads, const std::string&
         std::chrono::duration<double> elapsed = current_time - start_time;
         
         if (current_positions >= last_reported_positions + 100000 || current_positions == target_positions) {
-            double speed = current_positions / elapsed.count();
+            double speed = (current_positions - existing_positions) / elapsed.count();
             double progress = (static_cast<double>(current_positions) / target_positions) * 100.0;
             
             std::cout << "[Datagen Progress] Harvested: " << current_positions << " / " << target_positions

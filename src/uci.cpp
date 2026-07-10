@@ -6,15 +6,17 @@
 #include "tt.h"
 #include "evaluate.h"
 #include "nnue.h"
+#include "tbprobe.h"
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <chrono>
 #include <memory>
+#include <vector>
 
-// Worker thread for background search
-std::thread worker_thread;
+// Worker thread pool for background search
+std::vector<std::thread> worker_threads;
 
 // Recursive Perft function
 uint64_t perft(int depth, Board &board)
@@ -99,32 +101,55 @@ void run_perft_divide(int depth, Board &board)
     std::cout << "\n";
 }
 
-// Search wrapper function to safely pass board by value to the thread
-void search_wrapper(Board board, int max_depth, int wtime, int btime, int winc, int binc, int movetime)
-{
-    Search::search_position(board, max_depth, wtime, btime, winc, binc, movetime);
-}
-
-// Start search in the background thread
-void start_search(Board &board, int max_depth, int wtime, int btime, int winc, int binc, int movetime)
-{
-    // If a thread is already running, abort it and wait for it to join
-    if (worker_thread.joinable())
-    {
-        Search::b_abort = true;
-        worker_thread.join();
-    }
-    Search::b_abort = false;
-    worker_thread = std::thread(search_wrapper, board, max_depth, wtime, btime, winc, binc, movetime);
+static inline uint64_t get_time_ms() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
 // Stop the background search
 void stop_search()
 {
-    if (worker_thread.joinable())
+    Search::b_abort.store(true, std::memory_order_relaxed);
+    for (auto &t : worker_threads)
     {
-        Search::b_abort = true;
-        worker_thread.join();
+        if (t.joinable())
+        {
+            t.join();
+        }
+    }
+    worker_threads.clear();
+}
+
+// Start search in background thread pool (Lazy SMP)
+void start_search(Board &board, int max_depth, int wtime, int btime, int winc, int binc, int movetime)
+{
+    stop_search();
+
+    Search::b_abort.store(false, std::memory_order_relaxed);
+    Search::start_time = get_time_ms();
+
+    // Compute time controls from clock parameters BEFORE thread launch
+    Search::compute_time_controls(board.get_side_to_move(), max_depth, wtime, btime, winc, binc, movetime);
+
+    // Reset per-thread stats
+    for (int i = 0; i < Search::num_threads; i++) {
+        Search::thread_stats[i].nodes = 0;
+        Search::thread_stats[i].seldepth = 0;
+    }
+
+    // Spawn Thread 0 (main thread) using heap-allocated board copy
+    auto main_board = std::make_unique<Board>(board);
+    worker_threads.emplace_back([mb = std::move(main_board), max_depth]() {
+        Search::search_position(*mb, max_depth);
+        Search::b_abort.store(true, std::memory_order_relaxed);
+    });
+
+    // Spawn Helper Threads (1..N-1) using heap-allocated board copies
+    for (int i = 1; i < Search::num_threads; i++) {
+        auto helper_board = std::make_unique<Board>(board);
+        worker_threads.emplace_back([hb = std::move(helper_board), max_depth, i]() {
+            Search::search_helper(*hb, max_depth, i);
+        });
     }
 }
 
@@ -303,8 +328,12 @@ void run_benchmark()
         std::cout << "Benchmarking position " << (i + 1) << "..." << std::endl;
 
         // Run search synchronously to depth 10
-        Search::b_abort = false;
-        Search::search_position(*b, 10, -1, -1, 0, 0, -1);
+        Search::b_abort.store(false, std::memory_order_relaxed);
+        Search::start_time = get_time_ms();
+        Search::compute_time_controls(b->get_side_to_move(), 10, -1, -1, 0, 0, -1);
+        Search::thread_stats[0].nodes = 0;
+        Search::thread_stats[0].seldepth = 0;
+        Search::search_position(*b, 10);
 
         // Read nodes_visited
         extern thread_local uint64_t nodes_visited;
@@ -327,7 +356,8 @@ void run_benchmark()
 // Master UCI lifecycle loop
 void uci_loop()
 {
-    Board board;
+    auto board_ptr = std::make_unique<Board>();
+    Board &board = *board_ptr;
     board.parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 
     std::string line;
@@ -338,7 +368,7 @@ void uci_loop()
 
         if (line == "uci")
         {
-            std::cout << "id name Coco v1.1.1\n";
+            std::cout << "id name Coco v1.3.0\n";
             std::cout << "id author NotKaede-11\n";
             std::cout << "option name Hash type spin default 16 min 1 max 33554432\n";
             std::cout << "option name Threads type spin default 1 min 1 max 1024\n";
@@ -350,6 +380,9 @@ void uci_loop()
             std::cout << "option name History_Threshold type spin default 16384 min 4096 max 32768\n";
             std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name EvalFile type string default coco.nnue\n";
+            std::cout << "option name SyzygyPath type string default <empty>\n";
+            std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
+            std::cout << "option name SyzygyProbeLimit type bool default true\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)
@@ -374,6 +407,11 @@ void uci_loop()
                     if (option_name == "Hash")
                     {
                         tt.resize(std::stoi(option_value));
+                    }
+                    else if (option_name == "Threads")
+                    {
+                        int val = std::stoi(option_value);
+                        Search::num_threads = std::max(1, std::min(val, MAX_THREADS));
                     }
                     else if (option_name == "Move Overhead")
                     {
@@ -414,6 +452,22 @@ void uci_loop()
                     else if (option_name == "History_Threshold")
                     {
                         Search::History_Threshold = std::stoi(option_value);
+                    }
+                    else if (option_name == "SyzygyPath")
+                    {
+                        if (option_value == "<empty>" || option_value.empty()) {
+                            tb_free();
+                        } else {
+                            tb_init(option_value.c_str());
+                        }
+                    }
+                    else if (option_name == "SyzygyProbeDepth")
+                    {
+                        Search::SyzygyProbeDepth = std::stoi(option_value);
+                    }
+                    else if (option_name == "SyzygyProbeLimit")
+                    {
+                        Search::SyzygyProbeLimit = (option_value == "true");
                     }
                 }
                 catch (...)
@@ -468,6 +522,7 @@ void uci_loop()
         else if (line == "quit")
         {
             stop_search();
+            tb_free();
             break;
         }
     }

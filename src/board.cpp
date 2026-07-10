@@ -788,6 +788,40 @@ LegalityMasks Board::get_legality_masks() const {
         }
     }
 
+    // 3. Compute threats (all squares attacked by the opponent)
+    U64 threats = 0;
+
+    // Kingless occupancy: remove our king so slider rays "see through" it
+    U64 kingless_occ = occupancies[BOTH] ^ (1ULL << king_sq);
+
+    // Pawns (setwise, no loop)
+    U64 their_pawns = pieces[them][PAWN];
+    threats |= (them == WHITE) ? pawn_attacks_white(their_pawns) 
+                               : pawn_attacks_black(their_pawns);
+
+    // Knights (loop)
+    U64 their_knights = pieces[them][KNIGHT];
+    while (their_knights) {
+        threats |= get_knight_attacks(pop_lsb(their_knights));
+    }
+
+    // Bishops + Queen diagonals (loop, using kingless_occ)
+    U64 their_bishops = pieces[them][BISHOP] | pieces[them][QUEEN];
+    while (their_bishops) {
+        threats |= get_bishop_attacks(pop_lsb(their_bishops), kingless_occ);
+    }
+
+    // Rooks + Queen orthogonals (loop, using kingless_occ)
+    U64 their_rooks = pieces[them][ROOK] | pieces[them][QUEEN];
+    while (their_rooks) {
+        threats |= get_rook_attacks(pop_lsb(their_rooks), kingless_occ);
+    }
+
+    // Enemy king
+    threats |= get_king_attacks(get_lsb(pieces[them][KING]));
+
+    masks.threats = threats;
+
     return masks;
 }
 
