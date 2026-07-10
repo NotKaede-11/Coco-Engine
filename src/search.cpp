@@ -840,7 +840,7 @@ namespace Search {
     int Move_Overhead = 30;
     int SyzygyProbeDepth = 1;
     bool SyzygyProbeLimit = true;
-    int LMR_History_Divisor = 3000;
+    int LMR_History_Divisor = 8192;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
