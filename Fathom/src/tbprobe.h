@@ -204,7 +204,7 @@ void tb_free(void);
  * - Engines should use this function during search.
  * - This function is thread safe assuming TB_NO_THREADS is disabled.
  */
-unsigned tb_probe_wdl(
+static inline unsigned tb_probe_wdl(
     uint64_t _white,
     uint64_t _black,
     uint64_t _kings,
@@ -271,7 +271,7 @@ unsigned tb_probe_wdl(
  * - This function is NOT thread safe.  For engines this function should only
  *   be called once at the root per search.
  */
-unsigned tb_probe_root(
+static inline unsigned tb_probe_root(
     uint64_t _white,
     uint64_t _black,
     uint64_t _kings,
