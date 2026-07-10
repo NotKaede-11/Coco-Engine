@@ -980,8 +980,8 @@ namespace Search {
                         tb_score = -VALUE_TB + dtz + rule50;
                     }
                     
-                    std::cout << std::format("info depth 1 score cp {} nodes 1 nps 1000 pv {}\n", tb_score, move_to_str(tb_move));
-                    std::cout << std::format("bestmove {}\n", move_to_str(tb_move));
+                    std::cout << "info depth 1 score cp " << tb_score << " nodes 1 nps 1000 pv " << move_to_str(tb_move) << "\n";
+                    std::cout << "bestmove " << move_to_str(tb_move) << "\n";
                     std::cout << std::flush;
                     return;
                 }
