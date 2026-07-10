@@ -35,6 +35,7 @@ namespace Search {
     extern int Move_Overhead;
     extern int SyzygyProbeDepth;
     extern bool SyzygyProbeLimit;
+    extern int LMR_History_Divisor;
 
     // Initialize search-related tables (like LMR lookup table)
     void init_search_tables();

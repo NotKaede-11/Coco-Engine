@@ -128,6 +128,36 @@ unsigned probe_wdl(const Board& board) {
 }
 
 
+// Helper to retrieve the combined quiet history score for a move
+inline int get_quiet_history_score(const Board& board, Move move, int ply, U64 threats) {
+    Color side = board.get_side_to_move();
+    Piece piece_raw = board.get_piece_at(move.from());
+    PieceType piece = (PieceType)(piece_raw % 6);
+    int to = move.to();
+    bool tf = threats & (1ULL << move.from());
+    bool tt = threats & (1ULL << move.to());
+    
+    int score = 0;
+    if (piece < 7) {
+        score += history_table[side][tf][tt][piece][to];
+        
+        if (ply >= 1 && ply - 1 < MAX_PLY) {
+            const NodeInfo& ni1 = node_info[ply - 1];
+            if (ni1.piece >= 0 && ni1.piece < 7) {
+                score += cont_history[0][ni1.piece][ni1.to_sq][piece][to];
+            }
+        }
+        
+        if (ply >= 2 && ply - 2 < MAX_PLY) {
+            const NodeInfo& ni2 = node_info[ply - 2];
+            if (ni2.piece >= 0 && ni2.piece < 7) {
+                score += cont_history[1][ni2.piece][ni2.to_sq][piece][to];
+            }
+        }
+    }
+    return score;
+}
+
 // Move Ordering helper function using stack memory
 void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply, U64 threats = 0) {
     int scores[256] = {0};
@@ -169,35 +199,7 @@ void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply,
             } else if (ply < MAX_PLY && move == killer_moves[ply][1]) {
                 scores[i] = 800000;
             } else {
-                Piece piece_raw = board.get_piece_at(move.from());
-                PieceType piece = (PieceType)(piece_raw % 6);
-                int to = move.to();
-                
-                bool tf = threats & (1ULL << move.from());
-                bool tt = threats & (1ULL << move.to());
-                
-                // Safety bound check
-                if (piece < 7) {
-                    scores[i] = history_table[side][tf][tt][piece][to];
-                    
-                    // CMH (ply-1)
-                    if (ply >= 1 && ply - 1 < MAX_PLY) {
-                        const NodeInfo& ni1 = node_info[ply - 1];
-                        if (ni1.piece >= 0 && ni1.piece < 7) {
-                            scores[i] += cont_history[0][ni1.piece][ni1.to_sq][piece][to];
-                        }
-                    }
-                    
-                    // FMH (ply-2)
-                    if (ply >= 2 && ply - 2 < MAX_PLY) {
-                        const NodeInfo& ni2 = node_info[ply - 2];
-                        if (ni2.piece >= 0 && ni2.piece < 7) {
-                            scores[i] += cont_history[1][ni2.piece][ni2.to_sq][piece][to];
-                        }
-                    }
-                } else {
-                    scores[i] = 0;
-                }
+                scores[i] = get_quiet_history_score(board, move, ply, threats);
             }
         }
     }
@@ -554,6 +556,13 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                 if (to_threatened) {
                     reduction++;
                 }
+                
+                // History-based LMR adjustments (quiet history + CMH + FMH)
+                int hist_score = get_quiet_history_score(board, move, ply, masks.threats);
+                int hist_adj = hist_score / Search::LMR_History_Divisor;
+                hist_adj = std::max(-2, std::min(2, hist_adj));
+                reduction -= hist_adj;
+                
                 reduction = std::max(0, reduction);
                 
                 if (depth - 1 - reduction < 1) {
@@ -831,6 +840,7 @@ namespace Search {
     int Move_Overhead = 30;
     int SyzygyProbeDepth = 1;
     bool SyzygyProbeLimit = true;
+    int LMR_History_Divisor = 8192;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
@@ -1176,8 +1186,8 @@ namespace Search {
         }
 
         int target_depth = max_depth > 0 ? max_depth : MAX_PLY;
-        // Depth stagger: odd thread IDs skip depth 1 for search diversity
-        int start_depth = (thread_id % 2 == 1) ? 2 : 1;
+        // Diverse depth staggering across helper threads (spreads them across offsets 0, 1, 2)
+        int start_depth = 1 + (thread_id % 3);
         int last_score = 0;
 
         for (int current_depth = start_depth; current_depth <= target_depth; ++current_depth) {
@@ -1189,7 +1199,8 @@ namespace Search {
             if (current_depth < 3) {
                 score = alpha_beta(board, -INFINITY_SCORE, INFINITY_SCORE, current_depth, 0, true, false);
             } else {
-                int delta = Aspiration_Delta;
+                // Vary aspiration delta by thread to avoid synchronized fail-highs/lows
+                int delta = Aspiration_Delta + (thread_id % 4) * 4;
                 int alpha = std::max(last_score - delta, -INFINITY_SCORE);
                 int beta = std::min(last_score + delta, INFINITY_SCORE);
 

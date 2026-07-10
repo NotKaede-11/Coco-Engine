@@ -383,6 +383,7 @@ void uci_loop()
             std::cout << "option name SyzygyPath type string default <empty>\n";
             std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
             std::cout << "option name SyzygyProbeLimit type bool default true\n";
+            std::cout << "option name LMR_History_Divisor type spin default 8192 min 1024 max 32768\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)
@@ -468,6 +469,10 @@ void uci_loop()
                     else if (option_name == "SyzygyProbeLimit")
                     {
                         Search::SyzygyProbeLimit = (option_value == "true");
+                    }
+                    else if (option_name == "LMR_History_Divisor")
+                    {
+                        Search::LMR_History_Divisor = std::stoi(option_value);
                     }
                 }
                 catch (...)
