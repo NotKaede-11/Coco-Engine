@@ -2,6 +2,28 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [1.4.0] - 2026-07-13
+
+This release marks a massive milestone in Coco's history, delivering an outstanding **+238.25 Elo** strength increase over the v1.3.0 baseline! It introduces highly optimized search structures, a brand-new 100M-position neural network, and deep architectural fixes.
+
+### Added
+- **100M-Position Leela Neural Network:** Replaced the default network with a new network trained on 100M positions from Leela Chess Zero (LCZero), providing a massive boost in static evaluation accuracy.
+- **Bucket-Based Two-Tier TT:** Upgraded the transposition table replacement scheme to store two entries per bucket: one depth-preferred (resilient to shallow overwrites) and one always-replace (maintains recent search history).
+- **On-Demand (Incremental) Move Sorting:** Replaced full selection sorting with an incremental sorting loop, avoiding CPU sorting overhead at nodes that cut off early.
+- **History Gravity Decay:** Redesigned quiet and capture history updates to use a smooth mathematical saturation and decay formula (`h += bonus - h*|bonus|/HIST_MAX`), eliminating periodic threshold-division loops.
+- **Transposition Table Prefetching:** Integrated compiler prefetching hooks (`__builtin_prefetch`) to hide memory latency during deep tree searches.
+- **UCI Options & Contempt:** Added `Contempt` UCI option to avoid early draws, and exposed `SEE_Pruning_Depth` and `LMR_History_Divisor` to allow automated SPSA tuning.
+
+### Changed
+- **C++23 `<bit>` Migration:** Migrated low-level bitwise helpers to standard library hardware intrinsics (`std::popcount`, `std::countr_zero`) for maximum CPU instruction-level performance.
+- **UCI Version:** Updated the engine version name in the UCI handshake to `Coco v1.4.0`.
+
+### Fixed
+- **NNUE Perspective Swap Bug:** Fixed a critical evaluation perspective swapping bug in `evaluate_nnue` where active/passive weight indices were swapped.
+- **Board::see Quiet-Move Bug:** Fixed a `Board::see` quiet-move bug where non-captures were incorrectly evaluated with a positive pawn capture value.
+
+---
+
 ## [1.3.0] - 2026-07-10
 
 This release introduces a major suite of search, threading, and positional evaluation upgrades. All features have been verified for correctness and stability under extensive search matching and test suites.

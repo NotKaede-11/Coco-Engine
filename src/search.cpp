@@ -55,7 +55,8 @@ std::string move_to_str(Move m) {
 
 const int MAX_PLY = 128;
 thread_local Move killer_moves[MAX_PLY][2];
-thread_local int history_table[2][2][2][7][64]; // [color][threat_from][threat_to][piece_type][to_square] - size 7 to prevent out-of-bounds on NO_PIECE_TYPE
+thread_local Color root_color = WHITE;
+thread_local int16_t history_table[2][2][2][7][64]; // [color][threat_from][threat_to][piece_type][to_square] - size 7 to prevent out-of-bounds on NO_PIECE_TYPE
 int lmr_table[64][64];
 
 struct NodeInfo {
@@ -70,6 +71,10 @@ inline void update_history(int16_t& entry, int bonus) {
     int val = entry;
     val += bonus - val * std::abs(bonus) / 32768;
     entry = static_cast<int16_t>(std::clamp(val, -30000, 30000));
+}
+
+inline int draw_score(const Board& board) {
+    return board.get_side_to_move() == root_color ? -Search::Contempt : Search::Contempt;
 }
 
 
@@ -159,8 +164,7 @@ inline int get_quiet_history_score(const Board& board, Move move, int ply, U64 t
 }
 
 // Move Ordering helper function using stack memory
-void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply, U64 threats = 0) {
-    int scores[256] = {0};
+void order_moves(const Board& board, const MoveList& move_list, Move tt_move, int ply, int* scores, U64 threats = 0) {
     const int mvv_lva_values[6] = { 100, 320, 330, 500, 900, 20000 };
     
     Color side = board.get_side_to_move();
@@ -201,20 +205,6 @@ void order_moves(const Board& board, MoveList& move_list, Move tt_move, int ply,
             } else {
                 scores[i] = get_quiet_history_score(board, move, ply, threats);
             }
-        }
-    }
-    
-    // Sort using selection sort (zero heap allocations)
-    for (int i = 0; i < move_list.count - 1; i++) {
-        int best_idx = i;
-        for (int j = i + 1; j < move_list.count; j++) {
-            if (scores[j] > scores[best_idx]) {
-                best_idx = j;
-            }
-        }
-        if (best_idx != i) {
-            std::swap(move_list.moves[i], move_list.moves[best_idx]);
-            std::swap(scores[i], scores[best_idx]);
         }
     }
 }
@@ -274,7 +264,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     
     // Draw detection (Fifty-move rule and repetition check)
     if (ply > 0 && (board.get_halfmove_clock() >= 100 || board.is_repetition())) {
-        return 0;
+        return draw_score(board);
     }
     
     nodes_visited++;
@@ -426,7 +416,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     
     MoveList move_list;
     generate_pseudo_legal_moves(board, move_list);
-    order_moves(board, move_list, tt_move, ply, masks.threats);
+    int scores[256] = {0};
+    order_moves(board, move_list, tt_move, ply, scores, masks.threats);
     
     int legal_moves_count = 0;
     int best_score = -INFINITY_SCORE;
@@ -434,6 +425,18 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
     int moves_searched = 0;
  
     for (int i = 0; i < move_list.count; i++) {
+        // Incremental selection sort: pick the best move from i to end
+        int best_idx = i;
+        for (int j = i + 1; j < move_list.count; j++) {
+            if (scores[j] > scores[best_idx]) {
+                best_idx = j;
+            }
+        }
+        if (best_idx != i) {
+            std::swap(move_list.moves[i], move_list.moves[best_idx]);
+            std::swap(scores[i], scores[best_idx]);
+        }
+        
         Move move = move_list.moves[i];
         
         if (move == excluded_move) {
@@ -464,6 +467,13 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                 if (static_eval + margin <= alpha) {
                     continue;
                 }
+            }
+        }
+        
+        // Static Exchange Evaluation (SEE) Quiet Pruning
+        if (!move.is_capture() && !move.is_promotion() && depth <= Search::SEE_Pruning_Depth && !in_check) {
+            if (board.see(move) < 0) {
+                continue;
             }
         }
         
@@ -522,6 +532,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
         }
         
         board.make_move(move, true);
+        tt.prefetch(board.get_hash_key());
         legal_moves_count++;
         
         // Check if this move gives check
@@ -628,7 +639,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                         if (piece < 7) {
                             bool tf = masks.threats & (1ULL << move.from());
                             bool tt = masks.threats & (1ULL << move.to());
-                            history_table[side][tf][tt][piece][to] += depth * depth;
+                            update_history(history_table[side][tf][tt][piece][to], depth * depth);
                             
                             // CMH (ply-1)
                             if (ply >= 1 && ply - 1 < MAX_PLY) {
@@ -655,7 +666,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                                 if (failed_piece < 7) {
                                     bool ftf = masks.threats & (1ULL << failed_move.from());
                                     bool ftt = masks.threats & (1ULL << failed_move.to());
-                                    history_table[side][ftf][ftt][failed_piece][failed_to_sq] -= depth * depth;
+                                    update_history(history_table[side][ftf][ftt][failed_piece][failed_to_sq], -(depth * depth));
                                     
                                     // CMH malus
                                     if (ply >= 1 && ply - 1 < MAX_PLY) {
@@ -670,21 +681,6 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
                                         const NodeInfo& ni2 = node_info[ply - 2];
                                         if (ni2.piece >= 0 && ni2.piece < 7) {
                                             update_history(cont_history[1][ni2.piece][ni2.to_sq][failed_piece][failed_to_sq], -(depth * depth));
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // Prevent overflow via aging mechanism checking absolute values safely
-                            if (history_table[side][tf][tt][piece][to] > Search::History_Threshold || history_table[side][tf][tt][piece][to] < -Search::History_Threshold) {
-                                for (int c = 0; c < 2; ++c) {
-                                    for (int tf_idx = 0; tf_idx < 2; ++tf_idx) {
-                                        for (int tt_idx = 0; tt_idx < 2; ++tt_idx) {
-                                            for (int p = 0; p < 7; ++p) {
-                                                for (int s = 0; s < 64; ++s) {
-                                                    history_table[c][tf_idx][tt_idx][p][s] /= 2;
-                                                }
-                                            }
                                         }
                                     }
                                 }
@@ -733,7 +729,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv
             return -MATE_SCORE + ply;
         } else {
             // Stalemate
-            return 0;
+            return draw_score(board);
         }
     }
     
@@ -770,12 +766,25 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
     
     MoveList move_list;
     generate_pseudo_legal_moves(board, move_list);
-    order_moves(board, move_list, Move(), ply);
+    int scores[256] = {0};
+    order_moves(board, move_list, Move(), ply, scores);
     
     LegalityMasks masks = board.get_legality_masks();
     int moves_searched = 0;
 
     for (int i = 0; i < move_list.count; i++) {
+        // Incremental selection sort: pick the best move from i to end
+        int best_idx = i;
+        for (int j = i + 1; j < move_list.count; j++) {
+            if (scores[j] > scores[best_idx]) {
+                best_idx = j;
+            }
+        }
+        if (best_idx != i) {
+            std::swap(move_list.moves[i], move_list.moves[best_idx]);
+            std::swap(scores[i], scores[best_idx]);
+        }
+        
         Move move = move_list.moves[i];
         
         // Quiescence search must only evaluate capture sequences
@@ -802,6 +811,7 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
             continue;
         }
         board.make_move(move, true);
+        tt.prefetch(board.get_hash_key());
         moves_searched++;
         
         int score = -quiescence(board, -beta, -alpha, ply + 1);
@@ -831,16 +841,18 @@ namespace Search {
     int num_threads = 1;
     ThreadStats thread_stats[MAX_THREADS];
 
-    int RFP_Margin = 74;
-    int LMR_Constant_Scaled = 224;
-    int NMP_Base = 2;
-    int NMP_Divisor = 6;
+    int RFP_Margin = 70;
+    int LMR_Constant_Scaled = 218;
+    int NMP_Base = 3;
+    int NMP_Divisor = 7;
     int Aspiration_Delta = 18;
-    int History_Threshold = 16367;
+    int History_Threshold = 15576;
     int Move_Overhead = 30;
     int SyzygyProbeDepth = 1;
     bool SyzygyProbeLimit = true;
-    int LMR_History_Divisor = 8192;
+    int LMR_History_Divisor = 7302;
+    int Contempt = 0;
+    int SEE_Pruning_Depth = 0;
 
     void init_search_tables() {
         for (int d = 1; d < 64; d++) {
@@ -997,6 +1009,8 @@ namespace Search {
                 }
             }
         }
+        
+        root_color = board.get_side_to_move();
         
         Move best_move;
         Move last_completed_best_move;
@@ -1184,6 +1198,8 @@ namespace Search {
             node_info[i].piece = -1;
             node_info[i].to_sq = -1;
         }
+
+        root_color = board.get_side_to_move();
 
         int target_depth = max_depth > 0 ? max_depth : MAX_PLY;
         // Diverse depth staggering across helper threads (spreads them across offsets 0, 1, 2)

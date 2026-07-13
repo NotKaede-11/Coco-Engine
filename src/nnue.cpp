@@ -313,11 +313,11 @@ int NNUEEvaluator::evaluate_nnue(const Board& board) const {
     // Initialize output accumulator with layer 2 bias
     int32_t output_accumulator = layer2_bias;
 
-    // Active accumulator pass (us) uses the second L1_SIZE weights (indices L1_SIZE..2*L1_SIZE-1)
-    output_accumulator += evaluate_one_perspective(acc.v[us], layer2_weights + L1_SIZE);
+    // Active accumulator pass (us) uses the first L1_SIZE weights (indices 0..L1_SIZE-1)
+    output_accumulator += evaluate_one_perspective(acc.v[us], layer2_weights);
 
-    // Passive accumulator pass (them) uses the first L1_SIZE weights (indices 0..L1_SIZE-1)
-    output_accumulator += evaluate_one_perspective(acc.v[them], layer2_weights);
+    // Passive accumulator pass (them) uses the second L1_SIZE weights (indices L1_SIZE..2*L1_SIZE-1)
+    output_accumulator += evaluate_one_perspective(acc.v[them], layer2_weights + L1_SIZE);
 
     // Convert scaled quantized probability scalar back into centipawn score
     // Correct scaling factor for SCALE = 400: 400.0 / 16320.0 = 0.0245098

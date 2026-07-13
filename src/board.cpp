@@ -691,12 +691,12 @@ int Board::see(Move move) const {
     PieceType pt = (PieceType)(moving_piece % 6);
     
     Piece captured = (flag == FLAG_EP) ? (us == WHITE ? B_PAWN : W_PAWN) : board_array[to];
-    int cap_type = (captured != NO_PIECE) ? (captured % 6) : PAWN;
-    
     const int piece_values[6] = { 100, 320, 330, 500, 900, 20000 };
     
+    int cap_value = (captured != NO_PIECE) ? piece_values[captured % 6] : 0;
+    
     int gain[32];
-    gain[0] = piece_values[cap_type];
+    gain[0] = cap_value;
     if (move.is_promotion()) {
         int promo_pt = move.promotion_piece_type();
         gain[0] += piece_values[promo_pt] - piece_values[PAWN];

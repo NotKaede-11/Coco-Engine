@@ -3,9 +3,14 @@
 
 #include <cstdint>
 #include <string>
+#include <bit>
 
 // Compile-time option to change hidden layer size (e.g., 256, 512, 1024)
-constexpr int L1_SIZE = 256;
+// Can be overridden at compile time with -DL1_SIZE=512
+#ifndef L1_SIZE
+#define L1_SIZE 256
+#endif
+
 
 // Maximum number of search threads for Lazy SMP
 constexpr int MAX_THREADS = 256;
@@ -85,8 +90,8 @@ enum MoveFlag {
 // Bitwise operations helpers
 inline void set_bit(U64& bb, int square) { bb |= (1ULL << square); }
 inline void clear_bit(U64& bb, int square) { bb &= ~(1ULL << square); }
-inline int count_bits(U64 bb) { return __builtin_popcountll(bb); }
-inline int get_lsb(U64 bb) { return __builtin_ctzll(bb); }
+inline int count_bits(U64 bb) { return std::popcount(bb); }
+inline int get_lsb(U64 bb) { return std::countr_zero(bb); }
 
 // Pop LSB and return its square index
 inline int pop_lsb(U64& bb) {

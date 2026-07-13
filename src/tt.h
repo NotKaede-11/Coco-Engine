@@ -19,6 +19,11 @@ struct TTEntry {
     uint8_t flag;    // Bound type flag (exact, alpha, beta)
 };
 
+// TT Bucket containing 2 entries for Two-Tier depth-preferred/always-replace logic
+struct TTBucket {
+    TTEntry entries[2];
+};
+
 // Transposition Table Class
 class TranspositionTable {
 public:
@@ -40,9 +45,12 @@ public:
     // Probe the table for raw stored entry metrics (depth, score, flag, best_move)
     bool probe_entry(U64 key, int& score, uint8_t& depth, uint8_t& flag, Move& best_move, int ply);
 
+    // Prefetch a table entry to minimize memory cache misses
+    void prefetch(U64 key) const;
+
 private:
-    TTEntry* table;
-    size_t num_entries;
+    TTBucket* table;
+    size_t num_buckets;
 };
 
 // Global transposition table instance

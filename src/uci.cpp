@@ -368,22 +368,24 @@ void uci_loop()
 
         if (line == "uci")
         {
-            std::cout << "id name Coco v1.3.0\n";
+            std::cout << "id name Coco v1.4.0\n";
             std::cout << "id author NotKaede-11\n";
             std::cout << "option name Hash type spin default 16 min 1 max 33554432\n";
             std::cout << "option name Threads type spin default 1 min 1 max 1024\n";
-            std::cout << "option name RFP_Margin type spin default 75 min 25 max 150\n";
-            std::cout << "option name LMR_Constant_Scaled type spin default 225 min 100 max 400\n";
+            std::cout << "option name RFP_Margin type spin default 70 min 25 max 150\n";
+            std::cout << "option name LMR_Constant_Scaled type spin default 218 min 100 max 400\n";
             std::cout << "option name NMP_Base type spin default 3 min 1 max 5\n";
-            std::cout << "option name NMP_Divisor type spin default 6 min 3 max 12\n";
-            std::cout << "option name Aspiration_Delta type spin default 16 min 4 max 40\n";
-            std::cout << "option name History_Threshold type spin default 16384 min 4096 max 32768\n";
+            std::cout << "option name NMP_Divisor type spin default 7 min 3 max 12\n";
+            std::cout << "option name Aspiration_Delta type spin default 18 min 4 max 40\n";
+            std::cout << "option name History_Threshold type spin default 15576 min 4096 max 32768\n";
             std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name EvalFile type string default coco.nnue\n";
             std::cout << "option name SyzygyPath type string default <empty>\n";
             std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
             std::cout << "option name SyzygyProbeLimit type bool default true\n";
-            std::cout << "option name LMR_History_Divisor type spin default 8192 min 1024 max 32768\n";
+            std::cout << "option name LMR_History_Divisor type spin default 7302 min 1024 max 32768\n";
+            std::cout << "option name Contempt type spin default 0 min -100 max 100\n";
+            std::cout << "option name SEE_Pruning_Depth type spin default 6 min 0 max 20\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)
@@ -473,6 +475,14 @@ void uci_loop()
                     else if (option_name == "LMR_History_Divisor")
                     {
                         Search::LMR_History_Divisor = std::stoi(option_value);
+                    }
+                    else if (option_name == "Contempt")
+                    {
+                        Search::Contempt = std::stoi(option_value);
+                    }
+                    else if (option_name == "SEE_Pruning_Depth")
+                    {
+                        Search::SEE_Pruning_Depth = std::stoi(option_value);
                     }
                 }
                 catch (...)

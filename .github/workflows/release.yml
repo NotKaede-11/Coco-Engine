@@ -44,6 +44,7 @@ jobs:
         with:
           msystem: MINGW64
           update: false
+          install: mingw-w64-x86_64-gcc
 
       - name: Setup Compiler (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -51,7 +52,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential
 
-      - name: Run Build Command
+      - name: Run Build Command (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: ${{ matrix.build_cmd }}
+
+      - name: Run Build Command (Non-Windows)
+        if: matrix.os != 'windows-latest'
         run: ${{ matrix.build_cmd }}
 
       - name: Upload Artifacts
