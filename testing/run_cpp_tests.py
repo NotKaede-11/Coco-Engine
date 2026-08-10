@@ -84,7 +84,14 @@ def main() -> int:
             args.compiler, *flags, f"testing/{test}.cpp", *objects,
             "-o", str(executable), *link_flags,
         ], root, environment)
-        run([str(executable)], root, environment)
+        test_command = [str(executable)]
+        if args.sanitizers and test == "random_move_test":
+            # ASan/UBSan makes the 5,000-game stress profile exceed the
+            # per-process CI timeout. One thousand deterministic games still
+            # exercise roughly 200k randomized make/unmake plies while leaving
+            # time for every remaining instrumented fixture to run.
+            test_command.append("1000")
+        run(test_command, root, environment)
 
     print(f"PASS: {len(TESTS)} C++ fixture executables")
     return 0
