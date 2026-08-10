@@ -4,6 +4,9 @@
 #include <iostream>
 #include <sstream>
 #include <cctype>
+#include <cassert>
+#include <charconv>
+#include <limits>
 
 // Define static members of Board
 U64 Board::zobrist_pieces[2][6][64];
@@ -94,6 +97,30 @@ U64 Board::calculate_hash() const {
     return k;
 }
 
+bool Board::has_en_passant_capture() const {
+    if (en_passant_square == SQ_NONE) {
+        return false;
+    }
+
+    int expected_rank = side_to_move == WHITE ? 5 : 2;
+    if (en_passant_square / 8 != expected_rank ||
+        board_array[en_passant_square] != NO_PIECE) {
+        return false;
+    }
+
+    int captured_sq = en_passant_square + (side_to_move == WHITE ? -8 : 8);
+    int origin_sq = en_passant_square + (side_to_move == WHITE ? 8 : -8);
+    Piece expected_pawn = side_to_move == WHITE ? B_PAWN : W_PAWN;
+    if (captured_sq < 0 || captured_sq >= 64 || origin_sq < 0 || origin_sq >= 64 ||
+        board_array[captured_sq] != expected_pawn || board_array[origin_sq] != NO_PIECE) {
+        return false;
+    }
+
+    U64 capturers = get_pawn_attacks(side_to_move ^ 1, en_passant_square) &
+                    pieces[side_to_move][PAWN];
+    return capturers != 0;
+}
+
 void Board::update_occupancies() {
     occupancies[WHITE] = 0;
     for (int pt = 0; pt < 6; pt++) {
@@ -106,118 +133,109 @@ void Board::update_occupancies() {
     occupancies[BOTH] = occupancies[WHITE] | occupancies[BLACK];
 }
 
-void Board::parse_fen(const std::string& fen) {
-    clear();
-    int i = 0;
-    int n = fen.length();
+bool Board::parse_fen(const std::string& fen) {
+    std::istringstream input(fen);
+    std::string placement, active, castling, ep, halfmove, fullmove, extra;
+    if (!(input >> placement >> active >> castling >> ep >> halfmove >> fullmove)
+        || (input >> extra)) {
+        return false;
+    }
 
-    // 1. Piece placement
     int rank = 7;
     int file = 0;
-    while (i < n && fen[i] != ' ') {
-        char c = fen[i];
+    int white_kings = 0;
+    int black_kings = 0;
+    for (char c : placement) {
         if (c == '/') {
-            rank--;
+            if (file != 8 || rank == 0) return false;
+            --rank;
             file = 0;
         } else if (c >= '1' && c <= '8') {
-            file += (c - '0');
+            file += c - '0';
+            if (file > 8) return false;
         } else {
-            Color color = isupper(c) ? WHITE : BLACK;
-            char lower = tolower(c);
-            PieceType pt;
-            if (lower == 'p') pt = PAWN;
-            else if (lower == 'n') pt = KNIGHT;
-            else if (lower == 'b') pt = BISHOP;
-            else if (lower == 'r') pt = ROOK;
-            else if (lower == 'q') pt = QUEEN;
-            else if (lower == 'k') pt = KING;
-            else pt = NO_PIECE_TYPE;
-
-            if (pt != NO_PIECE_TYPE) {
-                int sq = rank * 8 + file;
-                set_bit(pieces[color][pt], sq);
-                board_array[sq] = (Piece)(color * 6 + pt);
-                file++;
-            }
+            const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lower != 'p' && lower != 'n' && lower != 'b'
+                && lower != 'r' && lower != 'q' && lower != 'k') return false;
+            if (++file > 8) return false;
+            if (c == 'K') ++white_kings;
+            if (c == 'k') ++black_kings;
         }
-        i++;
+    }
+    if (rank != 0 || file != 8 || white_kings != 1 || black_kings != 1) return false;
+    if (active != "w" && active != "b") return false;
+
+    if (castling != "-") {
+        int seen = 0;
+        for (char c : castling) {
+            int bit = c == 'K' ? 1 : c == 'Q' ? 2 : c == 'k' ? 4 : c == 'q' ? 8 : 0;
+            if (bit == 0 || (seen & bit)) return false;
+            seen |= bit;
+        }
+    }
+    if (ep != "-" && (ep.size() != 2 || ep[0] < 'a' || ep[0] > 'h'
+                       || (ep[1] != '3' && ep[1] != '6'))) return false;
+
+    auto parse_clock = [](const std::string& text, int minimum, int& value) {
+        if (text.empty()) return false;
+        int parsed = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+        if (result.ec != std::errc{} || result.ptr != text.data() + text.size()
+            || parsed < minimum) return false;
+        value = parsed;
+        return true;
+    };
+    int parsed_halfmove = 0;
+    int parsed_fullmove = 1;
+    if (!parse_clock(halfmove, 0, parsed_halfmove)
+        || !parse_clock(fullmove, 1, parsed_fullmove)) return false;
+
+    // Validation is complete. From here onward every square index is bounded,
+    // so malformed protocol input can never partially replace the live board.
+    clear();
+    rank = 7;
+    file = 0;
+    for (char c : placement) {
+        if (c == '/') {
+            --rank;
+            file = 0;
+        } else if (c >= '1' && c <= '8') {
+            file += c - '0';
+        } else {
+            const Color color = std::isupper(static_cast<unsigned char>(c)) ? WHITE : BLACK;
+            const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            PieceType pt = lower == 'p' ? PAWN : lower == 'n' ? KNIGHT
+                         : lower == 'b' ? BISHOP : lower == 'r' ? ROOK
+                         : lower == 'q' ? QUEEN : KING;
+            const int sq = rank * 8 + file++;
+            set_bit(pieces[color][pt], sq);
+            board_array[sq] = static_cast<Piece>(color * 6 + pt);
+        }
     }
 
-    // Skip spaces
-    while (i < n && fen[i] == ' ') i++;
-
-    // 2. Active color
-    if (i < n) {
-        side_to_move = (fen[i] == 'w') ? WHITE : BLACK;
-        i++;
-    }
-
-    // Skip spaces
-    while (i < n && fen[i] == ' ') i++;
-
-    // 3. Castling rights
+    side_to_move = active == "w" ? WHITE : BLACK;
     castling_rights = NO_CASTLING;
-    if (i < n && fen[i] == '-') {
-        i++;
-    } else {
-        while (i < n && fen[i] != ' ') {
-            char c = fen[i];
-            if (c == 'K') castling_rights |= WHITE_OO;
-            else if (c == 'Q') castling_rights |= WHITE_OOO;
-            else if (c == 'k') castling_rights |= BLACK_OO;
-            else if (c == 'q') castling_rights |= BLACK_OOO;
-            i++;
-        }
+    for (char c : castling) {
+        if (c == 'K') castling_rights |= WHITE_OO;
+        else if (c == 'Q') castling_rights |= WHITE_OOO;
+        else if (c == 'k') castling_rights |= BLACK_OO;
+        else if (c == 'q') castling_rights |= BLACK_OOO;
     }
-
-    // Skip spaces
-    while (i < n && fen[i] == ' ') i++;
-
-    // 4. En passant target square
-    en_passant_square = SQ_NONE;
-    if (i < n && fen[i] == '-') {
-        i++;
-    } else if (i + 1 < n && fen[i] >= 'a' && fen[i] <= 'h' && fen[i+1] >= '1' && fen[i+1] <= '8') {
-        int f = fen[i] - 'a';
-        int r = fen[i+1] - '1';
-        en_passant_square = (Square)(r * 8 + f);
-        i += 2;
-    }
-
-    // Skip spaces
-    while (i < n && fen[i] == ' ') i++;
-
-    // 5. Halfmove clock
-    halfmove_clock = 0;
-    if (i < n && isdigit(fen[i])) {
-        std::string s = "";
-        while (i < n && isdigit(fen[i])) {
-            s += fen[i];
-            i++;
-        }
-        halfmove_clock = std::stoi(s);
-    }
-
-    // Skip spaces
-    while (i < n && fen[i] == ' ') i++;
-
-    // 6. Fullmove number
-    fullmove_number = 1;
-    if (i < n && isdigit(fen[i])) {
-        std::string s = "";
-        while (i < n && isdigit(fen[i])) {
-            s += fen[i];
-            i++;
-        }
-        fullmove_number = std::stoi(s);
-    }
+    en_passant_square = ep == "-" ? SQ_NONE
+        : static_cast<Square>((ep[1] - '1') * 8 + ep[0] - 'a');
+    halfmove_clock = parsed_halfmove;
+    fullmove_number = parsed_fullmove;
 
     update_occupancies();
+    if (!has_en_passant_capture()) {
+        en_passant_square = SQ_NONE;
+    }
     hash_key = calculate_hash();
     history_ply = 0;
 
     // Initialize NNUE accumulator
     g_nnue.init_accumulator(*this, accumulator);
+    return true;
 }
 
 std::string Board::get_fen() const {
@@ -304,6 +322,11 @@ bool Board::is_square_attacked(int square, int attacker_color) const {
 }
 
 bool Board::make_move(Move move, bool checked) {
+    if (history_ply < 0 || history_ply >= HISTORY_CAPACITY) {
+        return false;
+    }
+    assert(history_ply >= 0 && history_ply < HISTORY_CAPACITY);
+
     int from = move.from();
     int to = move.to();
     int flag = move.flag();
@@ -325,8 +348,7 @@ bool Board::make_move(Move move, bool checked) {
         en_passant_square,
         halfmove_clock,
         NO_PIECE,
-        hash_key,
-        accumulator
+        hash_key
     };
     history_ply++;
 
@@ -352,6 +374,8 @@ bool Board::make_move(Move move, bool checked) {
 
             clear_bit(pieces[them][PAWN], ep_pawn_sq);
             board_array[ep_pawn_sq] = NO_PIECE;
+            clear_bit(occupancies[them], ep_pawn_sq);
+            clear_bit(occupancies[BOTH], ep_pawn_sq);
             hash_key ^= zobrist_pieces[them][PAWN][ep_pawn_sq];
         } else {
             Piece captured = board_array[to];
@@ -362,6 +386,8 @@ bool Board::make_move(Move move, bool checked) {
             nnue_deactivate_piece(them, cap_type, to);
 
             clear_bit(pieces[them][cap_type], to);
+            clear_bit(occupancies[them], to);
+            clear_bit(occupancies[BOTH], to);
             hash_key ^= zobrist_pieces[them][cap_type][to];
         }
         halfmove_clock = 0; // Reset on capture
@@ -375,6 +401,10 @@ bool Board::make_move(Move move, bool checked) {
 
     clear_bit(pieces[us][pt], from);
     set_bit(pieces[us][pt], to);
+    clear_bit(occupancies[us], from);
+    set_bit(occupancies[us], to);
+    clear_bit(occupancies[BOTH], from);
+    set_bit(occupancies[BOTH], to);
     board_array[from] = NO_PIECE;
     board_array[to] = moving_piece;
 
@@ -414,6 +444,10 @@ bool Board::make_move(Move move, bool checked) {
 
         clear_bit(pieces[us][ROOK], r_from);
         set_bit(pieces[us][ROOK], r_to);
+        clear_bit(occupancies[us], r_from);
+        set_bit(occupancies[us], r_to);
+        clear_bit(occupancies[BOTH], r_from);
+        set_bit(occupancies[BOTH], r_to);
         board_array[r_from] = NO_PIECE;
         board_array[r_to] = rook;
 
@@ -430,15 +464,16 @@ bool Board::make_move(Move move, bool checked) {
 
         clear_bit(pieces[us][ROOK], r_from);
         set_bit(pieces[us][ROOK], r_to);
+        clear_bit(occupancies[us], r_from);
+        set_bit(occupancies[us], r_to);
+        clear_bit(occupancies[BOTH], r_from);
+        set_bit(occupancies[BOTH], r_to);
         board_array[r_from] = NO_PIECE;
         board_array[r_to] = rook;
 
         hash_key ^= zobrist_pieces[us][ROOK][r_from];
         hash_key ^= zobrist_pieces[us][ROOK][r_to];
     }
-
-    // Update occupancies
-    update_occupancies();
 
     // Verify move legality (cannot expose king to check)
     if (!checked) {
@@ -455,6 +490,9 @@ bool Board::make_move(Move move, bool checked) {
     castling_rights = new_castling_rights;
 
     en_passant_square = new_en_passant_square;
+    if (!has_en_passant_capture()) {
+        en_passant_square = SQ_NONE;
+    }
     if (en_passant_square != SQ_NONE) {
         hash_key ^= zobrist_ep[en_passant_square % 8];
     }
@@ -463,6 +501,11 @@ bool Board::make_move(Move move, bool checked) {
 }
 
 void Board::unmake_move(Move move) {
+    assert(history_ply > 0);
+    if (history_ply <= 0) {
+        return;
+    }
+
     // Pop state info
     history_ply--;
     StateInfo state = history[history_ply];
@@ -474,6 +517,37 @@ void Board::unmake_move(Move move) {
     Color us = side_to_move; // us is the color to move NOW (which is them of the move)
     Color player = (Color)(us ^ 1);
     Piece moving_piece = board_array[to];
+
+    // Reverse the exact NNUE feature changes made by make_move.  This avoids
+    // storing a 2 KiB accumulator snapshot in every history entry.
+    if (move.is_promotion()) {
+        PieceType promo_pt = (PieceType)move.promotion_piece_type();
+        nnue_deactivate_piece(player, promo_pt, to);
+        nnue_activate_piece(player, PAWN, from);
+    } else {
+        PieceType moved_pt = (PieceType)(moving_piece % 6);
+        nnue_deactivate_piece(player, moved_pt, to);
+        nnue_activate_piece(player, moved_pt, from);
+    }
+
+    if (move.is_capture()) {
+        int captured_sq = (flag == FLAG_EP)
+            ? ((player == WHITE) ? (to - 8) : (to + 8))
+            : to;
+        Piece captured = state.captured_piece;
+        nnue_activate_piece(us, captured % 6, captured_sq);
+    }
+
+    if (flag == FLAG_KING_CASTLE || flag == FLAG_QUEEN_CASTLE) {
+        int rook_from = flag == FLAG_KING_CASTLE
+            ? ((player == WHITE) ? SQ_H1 : SQ_H8)
+            : ((player == WHITE) ? SQ_A1 : SQ_A8);
+        int rook_to = flag == FLAG_KING_CASTLE
+            ? ((player == WHITE) ? SQ_F1 : SQ_F8)
+            : ((player == WHITE) ? SQ_D1 : SQ_D8);
+        nnue_deactivate_piece(player, ROOK, rook_to);
+        nnue_activate_piece(player, ROOK, rook_from);
+    }
 
     // Restore side to move
     side_to_move = player;
@@ -495,6 +569,10 @@ void Board::unmake_move(Move move) {
     // Move the piece from to -> from
     clear_bit(pieces[player][pt], to);
     set_bit(pieces[player][pt], from);
+    clear_bit(occupancies[player], to);
+    set_bit(occupancies[player], from);
+    clear_bit(occupancies[BOTH], to);
+    set_bit(occupancies[BOTH], from);
     board_array[from] = moving_piece;
     board_array[to] = NO_PIECE;
 
@@ -508,10 +586,14 @@ void Board::unmake_move(Move move) {
             
             // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
             set_bit(pieces[us][PAWN], ep_pawn_sq);
+            set_bit(occupancies[us], ep_pawn_sq);
+            set_bit(occupancies[BOTH], ep_pawn_sq);
             board_array[ep_pawn_sq] = captured;
         } else {
             // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
             set_bit(pieces[us][cap_type], to);
+            set_bit(occupancies[us], to);
+            set_bit(occupancies[BOTH], to);
             board_array[to] = captured;
         }
     }
@@ -525,6 +607,10 @@ void Board::unmake_move(Move move) {
         // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
         clear_bit(pieces[player][ROOK], r_to);
         set_bit(pieces[player][ROOK], r_from);
+        clear_bit(occupancies[player], r_to);
+        set_bit(occupancies[player], r_from);
+        clear_bit(occupancies[BOTH], r_to);
+        set_bit(occupancies[BOTH], r_from);
         board_array[r_to] = NO_PIECE;
         board_array[r_from] = rook;
     } else if (flag == FLAG_QUEEN_CASTLE) {
@@ -535,6 +621,10 @@ void Board::unmake_move(Move move) {
         // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
         clear_bit(pieces[player][ROOK], r_to);
         set_bit(pieces[player][ROOK], r_from);
+        clear_bit(occupancies[player], r_to);
+        set_bit(occupancies[player], r_from);
+        clear_bit(occupancies[BOTH], r_to);
+        set_bit(occupancies[BOTH], r_from);
         board_array[r_to] = NO_PIECE;
         board_array[r_from] = rook;
     }
@@ -544,13 +634,11 @@ void Board::unmake_move(Move move) {
     en_passant_square = state.en_passant_square;
     halfmove_clock = state.halfmove_clock;
     hash_key = state.hash_key;
-    accumulator = state.accumulator; // Restore accumulator from history stack
 
     if (player == BLACK) {
         fullmove_number--;
     }
 
-    update_occupancies();
 }
 
 void Board::print() const {
@@ -594,7 +682,7 @@ void Board::print() const {
 void Board::nnue_activate_piece(int color, int pt, int sq) {
     int idx_w = get_feature_index_white(color, pt, sq);
     int idx_b = get_feature_index_black(color, pt, sq);
-    
+
     g_nnue.accumulator_activate(accumulator, WHITE, idx_w);
     g_nnue.accumulator_activate(accumulator, BLACK, idx_b);
 }
@@ -602,20 +690,24 @@ void Board::nnue_activate_piece(int color, int pt, int sq) {
 void Board::nnue_deactivate_piece(int color, int pt, int sq) {
     int idx_w = get_feature_index_white(color, pt, sq);
     int idx_b = get_feature_index_black(color, pt, sq);
-    
+
     g_nnue.accumulator_deactivate(accumulator, WHITE, idx_w);
     g_nnue.accumulator_deactivate(accumulator, BLACK, idx_b);
 }
 
-void Board::make_null_move() {
+bool Board::make_null_move() {
+    if (history_ply < 0 || history_ply >= HISTORY_CAPACITY) {
+        return false;
+    }
+    assert(history_ply >= 0 && history_ply < HISTORY_CAPACITY);
+
     // Save current state on history stack
     history[history_ply] = {
         castling_rights,
         en_passant_square,
         halfmove_clock,
         NO_PIECE,
-        hash_key,
-        accumulator
+        hash_key
     };
     history_ply++;
 
@@ -630,9 +722,15 @@ void Board::make_null_move() {
 
     // Clear en passant square
     en_passant_square = SQ_NONE;
+    return true;
 }
 
 void Board::unmake_null_move() {
+    assert(history_ply > 0);
+    if (history_ply <= 0) {
+        return;
+    }
+
     history_ply--;
     StateInfo state = history[history_ply];
 
@@ -640,7 +738,6 @@ void Board::unmake_null_move() {
     en_passant_square = state.en_passant_square;
     halfmove_clock = state.halfmove_clock;
     hash_key = state.hash_key;
-    accumulator = state.accumulator; // NNUE accumulator states are untouched
 
     side_to_move = (Color)(side_to_move ^ 1);
 }
@@ -704,10 +801,22 @@ int Board::see(Move move) const {
     
     U64 occ = occupancies[BOTH];
     clear_bit(occ, from);
+    U64 remaining[2] = { occupancies[WHITE], occupancies[BLACK] };
+    clear_bit(remaining[us], from);
+
+    if (captured != NO_PIECE) {
+        const int captured_square = move.is_en_passant()
+            ? to + (us == WHITE ? -8 : 8)
+            : to;
+        clear_bit(occ, captured_square);
+        clear_bit(remaining[them], captured_square);
+    }
     
     int depth = 1;
     int active_side = them;
-    int current_piece_value = piece_values[pt];
+    int current_piece_value = move.is_promotion()
+        ? piece_values[move.promotion_piece_type()]
+        : piece_values[pt];
     
     U64 attackers = get_all_attackers(to, occ);
     
@@ -715,7 +824,7 @@ int Board::see(Move move) const {
         int cheapest_sq = -1;
         int cheapest_val = 999999;
         
-        U64 side_attackers = attackers & occupancies[active_side];
+        U64 side_attackers = attackers & remaining[active_side];
         if (!side_attackers) break;
         
         U64 temp = side_attackers;
@@ -732,6 +841,7 @@ int Board::see(Move move) const {
         if (cheapest_sq == -1) break;
         
         clear_bit(occ, cheapest_sq);
+        clear_bit(remaining[active_side], cheapest_sq);
         gain[depth] = current_piece_value;
         current_piece_value = cheapest_val;
         
@@ -869,7 +979,9 @@ bool Board::is_move_legal(Move move, const LegalityMasks& masks) const {
         }
         int checker_sq = get_lsb(masks.checkers);
         U64 check_mask = (1ULL << checker_sq) | between_bb[king_sq][checker_sq];
-        if (!(check_mask & (1ULL << to))) {
+        int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
+        bool captures_checker_ep = flag == FLAG_EP && checker_sq == ep_pawn_sq;
+        if (!captures_checker_ep && !(check_mask & (1ULL << to))) {
             return false;
         }
     }
@@ -880,13 +992,16 @@ bool Board::is_move_legal(Move move, const LegalityMasks& masks) const {
         }
     }
 
+    // En passant removes a pawn from a square other than the destination, so
+    // validate both slider axes using the resulting occupancy.
     if (flag == FLAG_EP) {
         int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
-        U64 temp_occ = occupancies[BOTH] ^ (1ULL << from) ^ (1ULL << ep_pawn_sq) ^ (1ULL << to);
-        U64 horizontal_attacks = get_rook_attacks(king_sq, temp_occ);
-        if (horizontal_attacks & (pieces[them][ROOK] | pieces[them][QUEEN])) {
-            return false;
-        }
+        U64 temp_occ = (occupancies[BOTH] ^ (1ULL << from) ^
+                        (1ULL << ep_pawn_sq)) | (1ULL << to);
+        if (get_rook_attacks(king_sq, temp_occ) &
+            (pieces[them][ROOK] | pieces[them][QUEEN])) return false;
+        if (get_bishop_attacks(king_sq, temp_occ) &
+            (pieces[them][BISHOP] | pieces[them][QUEEN])) return false;
     }
 
     return true;

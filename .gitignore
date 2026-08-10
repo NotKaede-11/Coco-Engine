@@ -1,39 +1,104 @@
-# === C++ Build Artifacts ===
+# Compiled binaries and objects
 *.exe
+*.dll
 *.o
 *.obj
 *.pdb
 *.ilk
+*.gcda
+*.gcno
+coco
+coco-chess
+coco-tuner
 
-# === Local Log Files ===
-log.txt
-debug.log
-sprt_results.log
+# Generated source and build identity
+src/nnue_data.h
+src/build_info.h
+
+# Local benchmarks, logs, checkpoints, and large data
+scratch/
 logs/
-
-# === Project Subdirectories to Ignore ===
-# These folders contain test binaries, external engines, datasets, and tuning tools
-tuning/
-testing/
-opponents/
-scripts/
-bullet/
 backups/
+opponents/
 books/
 tournament_settings/
-.agents/
+bullet/
+tuning/
+nnue_test/
+graphify-out/
+tools/
 
-# === Other Untracked Development Files ===
-coco_roadmap.md
-engine_references.md
+# Generated test outputs; test source and fixtures remain trackable
+testing/old_tests/
+testing/ci-tests/
+testing/*.pgn
+testing/*.old
+testing/config.json
+testing/fastchess_help.md
+testing/nnue_debug_reference.md
+testing/run_sprt.bat
+testing/compare_fixed_bench.py
+testing/compare_movetime.py
+testing/compare_perft.py
+testing/generate_suite.py
+testing/run_bench.py
+testing/run_sprt_test.py
+testing/verify_perft_reference.py
+testing/sprt_evidence_test.py
+testing/syzygy_policy_test.py
+testing/opening_fen_generator.cpp
+testing/datagen_openings_8ply.fen
+testing/hard_tactics.epd
+testing/hce_tuner_fixture.txt
+
+# Tuner output/checkpoints
+spsa_*_results.json
+spsa_*_results.json.tmp
+tools/*_stdout.txt
+tools/*_stderr.txt
+
+# Local research, tuning, conversion, and maintenance scripts. The scripts
+# required by builds and releases remain trackable.
+scripts/check_references.py
+scripts/check_tests.py
+scripts/clean_repo.py
+scripts/cleanup_old_data.py
+scripts/compare_additional.py
+scripts/compare_with_stockfish.py
+scripts/export_bullet_to_nnue.py
+scripts/extract_leela.py
+scripts/generate_data.py
+scripts/generate_teacher_data.py
+scripts/interleave_data.py
+scripts/perft_test_harness.py
+scripts/prepare_leela_data.py
+scripts/selfplay_datagen.py
+scripts/spsa_common.py
+scripts/spsa_tune_30k.py
+scripts/spsa_tune_100k.py
+scripts/train_nnue.py
+
+# Local-only configuration and agent notes
+.agents/
 config.json
+task.md
 run_sprt.bat
 run_tune_30k.bat
 tune_30k.py
 tune_smoke_test.py
 tune_smoke_test.bat
-fastchess_help.md
 
-# === Generated NNUE Data Header ===
-src/nnue_data.h
+# Local implementation plans and audit records
+important_mds/
+masterplan.md
+movetime_record.md
+NNUE_INDEPENDENT_T6_T7_STRENGTH_PLAN.md
+NNUE_TRAINING_PLAN.md
+POST_T5_NON_T6_T7_IMPROVEMENTS.md
+RELEASE_GAUNTLET_PLAN.md
+ROLLED_BACK_T1_T5_EXPERIMENTS.md
+T5_AUDIT_AND_IMPLEMENTATION_ORDER.md
 
+# Python caches
+__pycache__/
+*.py[cod]

@@ -9,109 +9,308 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build & Publish
-    runs-on: ${{ matrix.os }}
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            artifact_name: coco-chess-linux-x64
-            build_cmd: g++ -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-linux-x64
+          # ================================================================
+          # Windows — cross-compiled on Linux using MinGW (5x faster than
+          # windows-latest runners, same environment, same result)
+          # ================================================================
+          - name: windows-x86-64-popcnt
+            runner: ubuntu-latest
+            arch: x86-64-popcnt
+            comp: mingw
+            validate: false
+            artifact: coco-chess-windows-x86-64-popcnt.exe
 
-          - os: windows-latest
-            artifact_name: coco-chess-windows-x64.exe
-            build_cmd: g++ -O3 -pthread -static -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-windows-x64.exe
+          - name: windows-x86-64-avx2
+            runner: ubuntu-latest
+            arch: x86-64-avx2
+            comp: mingw
+            validate: false
+            artifact: coco-chess-windows-x86-64-avx2.exe
 
-          - os: macos-latest
-            artifact_name: coco-chess-macos-universal
-            # Compile Universal Binary (arm64 + x86_64) using Clang (g++ alias on macOS)
-            build_cmd: |
-              g++ -target x86_64-apple-macos11 -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-x86_64
-              g++ -target arm64-apple-macos11 -O3 -pthread -std=c++23 src/*.cpp Fathom/src/tbprobe.c -IFathom/src -o coco-chess-arm64
-              lipo -create coco-chess-x86_64 coco-chess-arm64 -output coco-chess-macos-universal
+          - name: windows-x86-64-bmi2
+            runner: ubuntu-latest
+            arch: x86-64-bmi2
+            comp: mingw
+            validate: false
+            artifact: coco-chess-windows-x86-64-bmi2.exe
+
+          - name: windows-x86-64-avx512
+            runner: ubuntu-latest
+            arch: x86-64-avx512
+            comp: mingw
+            validate: false
+            artifact: coco-chess-windows-x86-64-avx512.exe
+
+          # ================================================================
+          # Linux — native GCC builds
+          # ================================================================
+          - name: linux-x86-64-popcnt
+            runner: ubuntu-22.04
+            arch: x86-64-popcnt
+            comp: gcc
+            validate: true
+            artifact: coco-chess-linux-x86-64-popcnt
+
+          - name: linux-x86-64-avx2
+            runner: ubuntu-22.04
+            arch: x86-64-avx2
+            comp: gcc
+            validate: true
+            artifact: coco-chess-linux-x86-64-avx2
+
+          - name: linux-x86-64-bmi2
+            runner: ubuntu-22.04
+            arch: x86-64-bmi2
+            comp: gcc
+            validate: true
+            artifact: coco-chess-linux-x86-64-bmi2
+
+          - name: linux-x86-64-avx512
+            runner: ubuntu-22.04
+            arch: x86-64-avx512
+            comp: gcc
+            validate: false
+            artifact: coco-chess-linux-x86-64-avx512
+
+          # ================================================================
+          # Linux ARM64 — baseline ARMv8 for Pi 5 and ARM servers
+          # ================================================================
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            arch: armv8
+            comp: gcc
+            validate: true
+            artifact: coco-chess-linux-arm64
+
+          - name: linux-arm64-dotprod
+            runner: ubuntu-24.04-arm
+            arch: armv8-dotprod
+            comp: gcc
+            validate: true
+            artifact: coco-chess-linux-arm64-dotprod
+
+          # ================================================================
+          # macOS Apple Silicon (M1/M2/M3/M4) — native ARM64 runner
+          # ================================================================
+          - name: macos-apple-silicon
+            runner: macos-15
+            arch: apple-silicon
+            comp: clang
+            validate: true
+            artifact: coco-chess-macos-apple-silicon
+
+          # ================================================================
+          # macOS Intel — x86-64 runner
+          # ================================================================
+          - name: macos-x86-64-popcnt
+            runner: macos-15-intel
+            arch: x86-64-popcnt
+            comp: clang
+            validate: true
+            artifact: coco-chess-macos-x86-64-popcnt
+
+          - name: macos-x86-64-avx2
+            runner: macos-15-intel
+            arch: x86-64-avx2
+            comp: clang
+            validate: true
+            artifact: coco-chess-macos-x86-64-avx2
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Generate Embedded NNUE Header
-        run: python scripts/make_nnue_header.py
+      # --- Toolchain setup ---
+      - name: Install MinGW (Windows cross-compile)
+        if: matrix.comp == 'mingw'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
 
-      - name: Setup Compiler (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc
-
-      - name: Setup Compiler (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install GCC (Linux)
+        if: matrix.comp == 'gcc'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
 
-      - name: Run Build Command (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: msys2 {0}
-        run: ${{ matrix.build_cmd }}
+      # macOS runners come with Clang via Xcode — no setup needed
 
-      - name: Run Build Command (Non-Windows)
-        if: matrix.os != 'windows-latest'
-        run: ${{ matrix.build_cmd }}
+      # --- Generate embedded NNUE header ---
+      - name: Generate Embedded NNUE Header
+        run: python3 scripts/make_nnue_header.py
 
-      - name: Upload Artifacts
+      # --- Build ---
+      - name: Build Engine
+        run: |
+          make build ARCH=${{ matrix.arch }} COMP=${{ matrix.comp }}
+
+      - name: Verify Network Identity
+        run: |
+          python3 testing/verify_nnue_file.py coco.nnue --l1-size 512 --sha256 392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055
+
+      - name: Validate Native Release Binary
+        if: matrix.validate
+        run: |
+          python3 testing/verify_build_identity.py ./coco-chess --arch ${{ matrix.arch }}
+          python3 testing/validate_options.py ./coco-chess
+          python3 testing/verify_uci_limits.py ./coco-chess
+          python3 testing/verify_fixed_signature.py ./coco-chess --nodes 731322
+
+      # --- Rename to final artifact name ---
+      - name: Rename Binary
+        run: |
+          if [ -f "coco-chess.exe" ]; then
+            mv coco-chess.exe ${{ matrix.artifact }}
+          else
+            mv coco-chess ${{ matrix.artifact }}
+          fi
+
+      - name: Record Artifact Provenance
+        run: |
+          runtime_flag=""
+          if [ "${{ matrix.validate }}" = "true" ]; then runtime_flag="--runtime-engine"; fi
+          python3 scripts/release_manifest.py artifact \
+            --artifact "${{ matrix.artifact }}" \
+            --arch "${{ matrix.arch }}" \
+            --compiler "${{ matrix.comp }}" \
+            --source-commit "${{ github.sha }}" \
+            --network coco.nnue \
+            --fixed-signature 731322 \
+            --fixed-signature-verified "${{ matrix.validate }}" \
+            $runtime_flag \
+            --output "${{ matrix.artifact }}.metadata.json"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.metadata.json
 
-  publish-release:
+  # ======================================================================
+  # Publish all artifacts as a single GitHub Release
+  # ======================================================================
+  publish:
     name: Publish GitHub Release
-    needs: build-and-release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download Windows Binary
+      - name: Download All Build Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: coco-chess-windows-x64.exe
           path: ./dist/
+          merge-multiple: true
 
-      - name: Download Linux Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: coco-chess-linux-x64
-          path: ./dist/
+      - name: List Release Files
+        run: ls -lh ./dist/
 
-      - name: Download macOS Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: coco-chess-macos-universal
-          path: ./dist/
+      - name: Mark Linux Binaries Executable
+        run: chmod +x ./dist/coco-chess-linux-* || true
 
-      - name: Copy NNUE File
-        run: cp coco.nnue ./dist/
-
-      - name: Create Release Notes
+      - name: Add License
         run: |
-          echo "### Coco Chess Engine Release ${{ github.ref_name }}" > release_notes.md
-          echo "" >> release_notes.md
-          echo "Please ensure the engine binary and the neural network weights file (\`coco.nnue\`) are placed in the same folder." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "See the [CHANGELOG.md](https://github.com/NotKaede-11/Coco-Engine/blob/main/CHANGELOG.md) for full change lists." >> release_notes.md
+          cp LICENSE ./dist/LICENSE.txt
+
+      - name: Assemble and Verify Release Manifest
+        run: |
+          python3 scripts/release_manifest.py assemble \
+            --dist ./dist \
+            --tag "${{ github.ref_name }}" \
+            --source-commit "${{ github.sha }}" \
+            --output ./dist/release-manifest.json
+          rm -f ./dist/*.metadata.json
+
+      - name: Generate Checksums
+        run: |
+          cd ./dist
+          sha256sum coco-chess-* LICENSE.txt release-manifest.json > SHA256SUMS.txt
+
+      - name: Generate Release Notes
+        run: |
+          cat > release_notes.md << EOF
+          > [!IMPORTANT]
+          > This is a development pre-release published for testing and feedback. It is not the next stable Coco release, and search defaults or packaged builds may change before that release.
+
+          ### What's included
+
+          - Reworked board-state, hashing, move-generation, NNUE accumulator, transposition-table, and search correctness foundations.
+          - Expanded UCI support including MultiPV, Ponder, complete search limits, WDL reporting, and tablebase telemetry.
+          - Optional BMI2/PEXT sliding attacks with a tested magic-bitboard fallback.
+          - Deterministic datagen, reproducible artifact manifests, checksums, and broader correctness/portability testing.
+          - Platform-specific Windows, Linux, Linux ARM64, Intel macOS, and Apple Silicon builds.
+
+          The current NNUE is embedded in every engine binary. This pre-release does not use a built-in opening book.
+
+          ### Which binary should I download?
+
+          | File | Platform | Best For |
+          |------|----------|----------|
+          | \`coco-chess-windows-x86-64-bmi2.exe\` | Windows | Intel Haswell+ / AMD Zen 3+ (**recommended for most x86 users**) |
+          | \`coco-chess-windows-x86-64-avx2.exe\` | Windows | AMD Zen 1/2 / older Intel (if bmi2 version is slow) |
+          | \`coco-chess-windows-x86-64-avx512.exe\` | Windows | AVX-512-capable Intel/AMD CPUs |
+          | \`coco-chess-windows-x86-64-popcnt.exe\` | Windows | Older x86-64 CPUs with SSE4.1 + POPCNT |
+          | \`coco-chess-linux-x86-64-bmi2\` | Linux | Intel Haswell+ / AMD Zen 3+ |
+          | \`coco-chess-linux-x86-64-avx2\` | Linux | AMD Zen 1/2 / older Intel |
+          | \`coco-chess-linux-x86-64-avx512\` | Linux | AVX-512-capable Intel/AMD CPUs |
+          | \`coco-chess-linux-x86-64-popcnt\` | Linux | Older x86-64 CPUs with SSE4.1 + POPCNT |
+          | \`coco-chess-linux-arm64\` | Linux | ARMv8 systems, including Raspberry Pi 5 and ARM servers |
+          | \`coco-chess-linux-arm64-dotprod\` | Linux | ARMv8.2 systems with dot-product support |
+          | \`coco-chess-macos-apple-silicon\` | macOS | Apple M1, M2, M3, M4 |
+          | \`coco-chess-macos-x86-64-avx2\` | macOS | Intel-based Mac |
+          | \`coco-chess-macos-x86-64-popcnt\` | macOS | Older Intel Mac without AVX2 |
+
+          > **Note:** The NNUE weights are embedded directly in each binary — no separate \`.nnue\` file is needed.
+
+          > **Pure calculation:** Coco has no built-in opening book and no release artifact contains one. GUI-provided books are external to the engine.
+
+          > **BMI2 note:** On AMD Zen 1 and Zen 2 CPUs, BMI2/PEXT is emulated in microcode (slow). Use the \`avx2\` binary instead.
+
+          > **AVX-512 note:** Use the AVX-512 binary only when your CPU explicitly supports AVX-512F, BW, DQ, and VL. Otherwise use BMI2, AVX2, or POPCNT.
+
+          ### Setup
+
+          1. Download the binary for your OS and CPU.
+          2. Place it wherever you store engine executables.
+          3. Add it to your GUI (Arena, BanksiaGUI, Cute Chess, etc.) and set the binary path.
+
+          Please report crashes, illegal moves, time losses, malformed PVs, or unexpected platform problems through [GitHub Issues](https://github.com/${{ github.repository }}/issues).
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for the complete provisional change list.
+          EOF
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            ./dist/coco-chess-windows-x64.exe
-            ./dist/coco-chess-linux-x64
-            ./dist/coco-chess-macos-universal
-            ./dist/coco.nnue
+            ./dist/coco-chess-windows-x86-64-popcnt.exe
+            ./dist/coco-chess-windows-x86-64-avx2.exe
+            ./dist/coco-chess-windows-x86-64-bmi2.exe
+            ./dist/coco-chess-windows-x86-64-avx512.exe
+            ./dist/coco-chess-linux-x86-64-popcnt
+            ./dist/coco-chess-linux-x86-64-avx2
+            ./dist/coco-chess-linux-x86-64-bmi2
+            ./dist/coco-chess-linux-x86-64-avx512
+            ./dist/coco-chess-linux-arm64
+            ./dist/coco-chess-linux-arm64-dotprod
+            ./dist/coco-chess-macos-apple-silicon
+            ./dist/coco-chess-macos-x86-64-popcnt
+            ./dist/coco-chess-macos-x86-64-avx2
+            ./dist/LICENSE.txt
+            ./dist/release-manifest.json
+            ./dist/SHA256SUMS.txt
           body_path: release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

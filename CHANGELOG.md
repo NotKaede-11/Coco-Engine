@@ -2,13 +2,44 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [Pre-release]
+
+This development pre-release rebuilds Coco's correctness foundation and expands its search, move generation, evaluation tooling, datagen, protocol support, and release validation. It is published for early testing and feedback before the next stable release.
+
+### Added
+
+- **Stateful Search Infrastructure:** Added staged move picking, dedicated capture/quiet/evasion generation, restored quiescence/PVS/LMR guards, MultiPV, Ponder, complete UCI node and time limits, and corrected Lazy SMP root-node accounting.
+- **PEXT Sliding Attacks:** Added an optional BMI2/PEXT backend with tested magic-bitboard fallback and a `Use PEXT` UCI switch.
+- **HCE Trace and Tuner:** Added production-aligned classical feature tracing for pawn structure, imbalances, passers, threats, mobility, king safety, endgames, validation splits, checkpoint/resume, and gradient tests. Normal engine play remains NNUE-evaluated.
+- **Native Self-Play Datagen:** Added deterministic seeds, private worker TTs, game-state reset, validated TT moves, WDL adjudication, buffered output, exact record targets, and reproducible trainer metadata. With no `--book` argument, openings are generated through engine calculation.
+- **Correctness and CI Suites:** Added make/unmake/hash/NNUE accumulator tests, randomized-game stress, TT/fail-soft/NMP/QS/SEE fixtures, noisy-opening regressions, UCI-limit checks, and 149-position perft coverage through D3.
+- **Multi-Architecture Releases:** Added Windows POPCNT/AVX2/BMI2/AVX-512, Linux POPCNT/AVX2/BMI2/AVX-512/ARM64/ARM64-dotprod, and macOS Apple Silicon/Intel builds with checksums and license artifacts.
+- **Analysis Protocol:** Added complete `searchmoves` filtering, bounded `go mate`, optional WDL output, analysis-mode compatibility, delayed current-move reporting, and tablebase-hit telemetry.
+- **Reproducible Artifacts:** Added runtime build/network identity plus manifests for release binaries, self-play datasets, and paired engine matches.
+
+### Changed
+
+- **Board and NNUE State:** Replaced per-node accumulator copies with a checked accumulator stack, incremental occupancy updates, and network-safe position rebuilds after `EvalFile` reload.
+- **Transposition Table:** Added clustered cache-line storage, generation aging, power-of-two indexing, lockless verification, correct fail-soft bounds, move retention on shallow hits, mate-score conversion, and clear/hashfull support.
+- **Evaluation Network Packaging:** The production NNUE is embedded in release binaries; `EvalFile` remains available for deliberate runtime replacement.
+
+### Fixed
+
+- Board-state, en-passant legality, castling, repetition/hash, PV-cycle, TT replacement, and concurrent root-accounting defects found during the ground-up audit.
+- Incorrect UCI declaration `SyzygyProbeLimit type bool`; it now uses standard `type check`.
+- Incorrect advertised `SEE_Pruning_Depth` default; it now reports the accepted production value of `0`.
+- Added standard `debug on` / `debug off` UCI handling.
+- Hardened malformed FEN, move, and UCI command handling so rejected positions cannot partially mutate the active board.
+- Corrected Syzygy score-band and rule-50 policy handling, including safe repeated tablebase initialization and cleanup.
+- Removed unsupported and deferred parameters from the default SPSA profiles.
+
 ## [1.4.0] - 2026-07-13
 
 This release marks a massive milestone in Coco's history, delivering an outstanding **+238.25 Elo** strength increase over the v1.3.0 baseline! It introduces highly optimized search structures, a brand-new 100M-position neural network, and deep architectural fixes.
 
 ### Added
 - **100M-Position Leela Neural Network:** Replaced the default network with a new network trained on 100M positions from Leela Chess Zero (LCZero), providing a massive boost in static evaluation accuracy.
-- **Bucket-Based Two-Tier TT:** Upgraded the transposition table replacement scheme to store two entries per bucket: one depth-preferred (resilient to shallow overwrites) and one always-replace (maintains recent search history).
+- **Two-Slot Bucket TT:** Upgraded the transposition table replacement scheme to store one depth-preferred entry and one always-replace entry per bucket.
 - **On-Demand (Incremental) Move Sorting:** Replaced full selection sorting with an incremental sorting loop, avoiding CPU sorting overhead at nodes that cut off early.
 - **History Gravity Decay:** Redesigned quiet and capture history updates to use a smooth mathematical saturation and decay formula (`h += bonus - h*|bonus|/HIST_MAX`), eliminating periodic threshold-division loops.
 - **Transposition Table Prefetching:** Integrated compiler prefetching hooks (`__builtin_prefetch`) to hide memory latency during deep tree searches.

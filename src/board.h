@@ -16,7 +16,6 @@ struct StateInfo {
     int halfmove_clock;
     Piece captured_piece;
     U64 hash_key;
-    Accumulator accumulator;
 };
 
 struct LegalityMasks {
@@ -28,13 +27,15 @@ struct LegalityMasks {
 
 class Board {
 public:
+    static constexpr int HISTORY_CAPACITY = 2048;
+
     Board();
 
     // Reset board to empty
     void clear();
 
-    // Parse FEN string and setup board
-    void parse_fen(const std::string& fen);
+    // Parse a complete six-field FEN. Invalid input leaves the board unchanged.
+    bool parse_fen(const std::string& fen);
 
     // Convert current board state to FEN string
     std::string get_fen() const;
@@ -47,7 +48,7 @@ public:
     void unmake_move(Move move);
 
     // Null moves
-    void make_null_move();
+    bool make_null_move();
     void unmake_null_move();
 
 
@@ -70,6 +71,7 @@ public:
     int get_en_passant_square() const { return en_passant_square; }
     int get_halfmove_clock() const { return halfmove_clock; }
     U64 get_hash_key() const { return hash_key; }
+    U64 recompute_hash() const { return calculate_hash(); }
     Piece get_piece_at(int square) const { return board_array[square]; }
     const Accumulator& get_accumulator() const { return accumulator; }
     bool is_repetition() const;
@@ -112,11 +114,15 @@ private:
     Accumulator accumulator;
 
     // History stack for unmake_move
-    StateInfo history[1024];
+    StateInfo history[HISTORY_CAPACITY];
     int history_ply;
 
     // Helper to calculate full Zobrist hash from scratch
     U64 calculate_hash() const;
+
+    // True when the current EP target represents a structurally possible
+    // capture for the side to move.
+    bool has_en_passant_capture() const;
 
     // Helper to update occupancies based on piece bitboards
     void update_occupancies();

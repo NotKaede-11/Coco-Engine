@@ -3,6 +3,9 @@
 
 #include "types.h"
 #include "board.h"
+#if defined(__BMI2__)
+#include <immintrin.h>
+#endif
 
 // Array-backed, zero-heap-allocation move list
 struct MoveList {
@@ -32,9 +35,14 @@ extern U64 rook_magics[64];
 
 extern U64* bishop_attacks[64];
 extern U64* rook_attacks[64];
+extern U64* bishop_pext_attacks[64];
+extern U64* rook_pext_attacks[64];
+extern bool use_pext_attacks;
 
 // Initialization functions
 void init_all_attack_tables();
+bool pext_available();
+void set_pext_enabled(bool enabled);
 
 // Inline attack getters
 inline U64 get_pawn_attacks(int color, int square) {
@@ -59,12 +67,20 @@ inline U64 get_king_attacks(int square) {
 
 inline U64 get_bishop_attacks(int square, U64 occupancy) {
     U64 occ = occupancy & bishop_masks[square];
+#if defined(__BMI2__)
+    if (use_pext_attacks)
+        return bishop_pext_attacks[square][_pext_u64(occ, bishop_masks[square])];
+#endif
     int index = (occ * bishop_magics[square]) >> bishop_shifts[square];
     return bishop_attacks[square][index];
 }
 
 inline U64 get_rook_attacks(int square, U64 occupancy) {
     U64 occ = occupancy & rook_masks[square];
+#if defined(__BMI2__)
+    if (use_pext_attacks)
+        return rook_pext_attacks[square][_pext_u64(occ, rook_masks[square])];
+#endif
     int index = (occ * rook_magics[square]) >> rook_shifts[square];
     return rook_attacks[square][index];
 }
@@ -78,5 +94,12 @@ extern U64 line_bb[64][64];
 
 // Pseudo-legal move generator
 void generate_pseudo_legal_moves(const Board& board, MoveList& move_list);
+
+// Staged generation APIs.  These deliberately preserve the all-moves
+// generator as a differential oracle while the specialized backends evolve.
+void generate_capture_moves(const Board& board, MoveList& move_list);
+void generate_quiet_moves(const Board& board, MoveList& move_list);
+void generate_noisy_moves(const Board& board, MoveList& move_list);
+void generate_evasion_moves(const Board& board, MoveList& move_list);
 
 #endif // MOVEGEN_H

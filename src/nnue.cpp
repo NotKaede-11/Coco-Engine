@@ -4,6 +4,8 @@
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -33,6 +35,35 @@ alignas(32) static const uint8_t raw_nnue_data[] = {
 
 // Global NNUE evaluator instance
 NNUEEvaluator g_nnue;
+
+static std::string fnv1a64_identity(const uint8_t* data, size_t size) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream out;
+    out << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return out.str();
+}
+
+static bool fingerprint_file(FILE* file, std::string& identity) {
+    if (fseek(file, 0, SEEK_SET) != 0) return false;
+    uint64_t hash = 14695981039346656037ULL;
+    uint8_t buffer[16384];
+    size_t count = 0;
+    while ((count = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        for (size_t i = 0; i < count; ++i) {
+            hash ^= buffer[i];
+            hash *= 1099511628211ULL;
+        }
+    }
+    if (ferror(file)) return false;
+    std::ostringstream out;
+    out << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << hash;
+    identity = out.str();
+    return fseek(file, 0, SEEK_SET) == 0;
+}
 
 NNUEEvaluator::NNUEEvaluator() {
     // Zero-initialize weights and biases
@@ -79,6 +110,11 @@ bool NNUEEvaluator::load_network(const std::string& filename) {
         fclose(f);
         return false;
     }
+    std::string loaded_fingerprint;
+    if (!fingerprint_file(f, loaded_fingerprint)) {
+        fclose(f);
+        return false;
+    }
 
     // Temporary buffer to hold the raw w1 weights of shape [L1_SIZE][768]
     auto temp_w1 = std::make_unique<int16_t[]>(L1_SIZE * 768);
@@ -115,6 +151,8 @@ bool NNUEEvaluator::load_network(const std::string& filename) {
     }
 
     fclose(f);
+    active_network_fingerprint = loaded_fingerprint;
+    active_network_source = filename;
     return true;
 }
 
@@ -127,6 +165,9 @@ void NNUEEvaluator::load_embedded_network() {
                   << " (" << expected_size << " bytes). Embedded loading disabled." << std::endl;
         return;
     }
+
+    active_network_fingerprint = fnv1a64_identity(raw_nnue_data, sizeof(raw_nnue_data));
+    active_network_source = "embedded";
 
     const uint8_t* ptr = raw_nnue_data;
 

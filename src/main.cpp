@@ -8,6 +8,8 @@
 #include "datagen.h"
 #include <iostream>
 #include <vector>
+#include <stdexcept>
+#include <filesystem>
 
 int main(int argc, char* argv[]) {
     // Disable I/O buffering for UCI pipe compatibility on Windows.
@@ -34,13 +36,33 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> args(argv, argv + argc);
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--datagen" && i + 3 < args.size()) {
-            long long target_positions = std::stoll(args[i + 1]);
-            int num_threads = std::stoi(args[i + 2]);
-            std::string output_path = args[i + 3];
-            
-            std::cout << "[Coco Engine] Initializing Native C++ Data Generator Subsystem..." << std::endl;
-            run_datagen(target_positions, num_threads, output_path);
-            return 0;
+            try {
+                const long long target_positions = std::stoll(args[i + 1]);
+                const int num_threads = std::stoi(args[i + 2]);
+                const std::string output_path = args[i + 3];
+                DatagenOptions options;
+                options.engine_path = std::filesystem::absolute(args[0]).string();
+                for (size_t j = i + 4; j < args.size(); ++j) {
+                    if (args[j] == "--seed" && j + 1 < args.size())
+                        options.seed = std::stoull(args[++j]);
+                    else if (args[j] == "--book" && j + 1 < args.size())
+                        options.opening_book_path = args[++j];
+                    else if (args[j] == "--buffer" && j + 1 < args.size())
+                        options.buffer_positions = std::stoull(args[++j]);
+                    else if (args[j] == "--datagen-tt" && j + 1 < args.size())
+                        options.tt_mb_per_worker = std::stoull(args[++j]);
+                    else if (args[j] == "--manifest" && j + 1 < args.size())
+                        options.manifest_path = args[++j];
+                    else
+                        throw std::invalid_argument("unknown or incomplete datagen option: " + args[j]);
+                }
+
+                std::cout << "[Coco Engine] Initializing Native C++ Data Generator Subsystem..." << std::endl;
+                return run_datagen(target_positions, num_threads, output_path, options) ? 0 : 1;
+            } catch (const std::exception& error) {
+                std::cerr << "Invalid datagen arguments: " << error.what() << '\n';
+                return 1;
+            }
         }
     }
     

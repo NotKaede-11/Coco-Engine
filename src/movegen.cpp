@@ -1,4 +1,7 @@
 #include "movegen.h"
+#include <cassert>
+#include <iterator>
+#include <array>
 #include <vector>
 #include <algorithm>
 #include <iostream>
@@ -17,6 +20,9 @@ U64 rook_magics[64];
 
 U64* bishop_attacks[64];
 U64* rook_attacks[64];
+U64* bishop_pext_attacks[64];
+U64* rook_pext_attacks[64];
+bool use_pext_attacks = false;
 
 U64 between_bb[64][64];
 U64 line_bb[64][64];
@@ -24,6 +30,20 @@ U64 line_bb[64][64];
 // Flat tables for sliding attacks
 U64 bishop_attacks_table[5248];
 U64 rook_attacks_table[102400];
+U64 bishop_pext_attacks_table[5248];
+U64 rook_pext_attacks_table[102400];
+
+bool pext_available() {
+#if defined(__BMI2__)
+    return __builtin_cpu_supports("bmi2");
+#else
+    return false;
+#endif
+}
+
+void set_pext_enabled(bool enabled) {
+    use_pext_attacks = enabled && pext_available();
+}
 
 // Helper functions for magic bitboards generation
 U64 bishop_attacks_on_the_fly(int sq, U64 block) {
@@ -228,27 +248,38 @@ void init_all_attack_tables() {
         bishop_magics[sq] = find_magic(sq, b_bits, true);
         rook_magics[sq] = find_magic(sq, r_bits, false);
 
+        assert(bishop_offset + (1ULL << b_bits) <= std::size(bishop_attacks_table));
+        assert(rook_offset + (1ULL << r_bits) <= std::size(rook_attacks_table));
         bishop_attacks[sq] = &bishop_attacks_table[bishop_offset];
         rook_attacks[sq] = &rook_attacks_table[rook_offset];
+        bishop_pext_attacks[sq] = &bishop_pext_attacks_table[bishop_offset];
+        rook_pext_attacks[sq] = &rook_pext_attacks_table[rook_offset];
 
         // Fill attack tables
         int b_indices = 1 << b_bits;
         for (int i = 0; i < b_indices; i++) {
             U64 block = set_occupancy_helper(i, bishop_masks[sq]);
             int idx = (block * bishop_magics[sq]) >> bishop_shifts[sq];
+            assert(idx >= 0 && idx < b_indices);
             bishop_attacks[sq][idx] = bishop_attacks_on_the_fly(sq, block);
+            bishop_pext_attacks[sq][i] = bishop_attacks_on_the_fly(sq, block);
         }
 
         int r_indices = 1 << r_bits;
         for (int i = 0; i < r_indices; i++) {
             U64 block = set_occupancy_helper(i, rook_masks[sq]);
             int idx = (block * rook_magics[sq]) >> rook_shifts[sq];
+            assert(idx >= 0 && idx < r_indices);
             rook_attacks[sq][idx] = rook_attacks_on_the_fly(sq, block);
+            rook_pext_attacks[sq][i] = rook_attacks_on_the_fly(sq, block);
         }
 
         bishop_offset += b_indices;
         rook_offset += r_indices;
     }
+    assert(bishop_offset == std::size(bishop_attacks_table));
+    assert(rook_offset == std::size(rook_attacks_table));
+    set_pext_enabled(true);
 
     // 3. Initialize between_bb and line_bb
     for (int sq1 = 0; sq1 < 64; sq1++) {
@@ -295,7 +326,139 @@ void init_all_attack_tables() {
     }
 }
 
-void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
+namespace {
+void add_pawn_promotions(MoveList& list, int from, int to, bool capture) {
+    const int base = capture ? FLAG_PROMO_KNIGHT_CAP : FLAG_PROMO_KNIGHT;
+    list.add(Move(from, to, base));
+    list.add(Move(from, to, base + 1));
+    list.add(Move(from, to, base + 2));
+    list.add(Move(from, to, base + 3));
+}
+
+void generate_pawn_moves_oracle(const Board& board, MoveList& list) {
+    const Color us = board.get_side_to_move();
+    const Color them = Color(us ^ 1);
+    const U64 enemy = board.get_occupancy(them);
+    const U64 empty = ~board.get_occupancy(BOTH);
+    U64 pawns = board.get_pieces(us, PAWN);
+
+    while (pawns) {
+        const int from = pop_lsb(pawns);
+        const int rank = from / 8;
+        const int step = us == WHITE ? 8 : -8;
+        const int to = from + step;
+
+        if (to >= 0 && to < 64 && (empty & (1ULL << to))) {
+            if (to >= 56 || to <= 7)
+                add_pawn_promotions(list, from, to, false);
+            else
+                list.add(Move(from, to, FLAG_QUIET));
+
+            const int to2 = from + 2 * step;
+            if (((us == WHITE && rank == 1) || (us == BLACK && rank == 6))
+                && (empty & (1ULL << to2)))
+                list.add(Move(from, to2, FLAG_DOUBLE_PAWN));
+        }
+
+        U64 attacks = pawn_attacks[us][from] & enemy;
+        while (attacks) {
+            const int target = pop_lsb(attacks);
+            if (target >= 56 || target <= 7)
+                add_pawn_promotions(list, from, target, true);
+            else
+                list.add(Move(from, target, FLAG_CAPTURE));
+        }
+
+        const int ep = board.get_en_passant_square();
+        if (ep != SQ_NONE && (pawn_attacks[us][from] & (1ULL << ep)))
+            list.add(Move(from, ep, FLAG_EP));
+    }
+}
+
+void generate_pawn_moves_setwise(const Board& board, MoveList& list) {
+    constexpr U64 RANK_3 = 0x0000000000FF0000ULL;
+    constexpr U64 RANK_6 = 0x0000FF0000000000ULL;
+
+    const Color us = board.get_side_to_move();
+    const Color them = Color(us ^ 1);
+    const U64 pawns = board.get_pieces(us, PAWN);
+    const U64 enemy = board.get_occupancy(them);
+    const U64 empty = ~board.get_occupancy(BOTH);
+
+    const int ep = board.get_en_passant_square();
+    const U64 single = us == WHITE ? (pawns << 8) & empty : (pawns >> 8) & empty;
+    const U64 doubles = us == WHITE ? ((single & RANK_3) << 8) & empty
+                                    : ((single & RANK_6) >> 8) & empty;
+    const U64 capture_targets = (us == WHITE ? pawn_attacks_white(pawns)
+                                             : pawn_attacks_black(pawns)) & enemy;
+
+    // Emit in the original source-square order. This retains tied move-order
+    // behavior while the availability masks themselves are computed setwise.
+    U64 sources = pawns;
+    while (sources) {
+        const int from = pop_lsb(sources);
+        const int step = us == WHITE ? 8 : -8;
+        const int to = from + step;
+        if (single & (1ULL << to)) {
+            if (to >= 56 || to <= 7)
+                add_pawn_promotions(list, from, to, false);
+            else
+                list.add(Move(from, to, FLAG_QUIET));
+
+            const int to2 = from + 2 * step;
+            if (to2 >= 0 && to2 < 64 && (doubles & (1ULL << to2)))
+                list.add(Move(from, to2, FLAG_DOUBLE_PAWN));
+        }
+
+        U64 attacks = pawn_attacks[us][from] & capture_targets;
+        while (attacks) {
+            const int target = pop_lsb(attacks);
+            if (target >= 56 || target <= 7)
+                add_pawn_promotions(list, from, target, true);
+            else
+                list.add(Move(from, target, FLAG_CAPTURE));
+        }
+
+        if (ep != SQ_NONE && (pawn_attacks[us][from] & (1ULL << ep)))
+            list.add(Move(from, ep, FLAG_EP));
+    }
+}
+
+#ifndef NDEBUG
+bool same_move_set(const MoveList& lhs, const MoveList& rhs) {
+    if (lhs.count != rhs.count) return false;
+    std::array<bool, 65536> seen{};
+    for (int i = 0; i < lhs.count; ++i) {
+        if (seen[lhs.moves[i].value]) return false;
+        seen[lhs.moves[i].value] = true;
+    }
+    for (int i = 0; i < rhs.count; ++i) {
+        if (!seen[rhs.moves[i].value]) return false;
+        seen[rhs.moves[i].value] = false;
+    }
+    return true;
+}
+#endif
+}
+
+enum class GenerationMode : uint8_t { ALL, CAPTURES, QUIETS, NOISY };
+
+inline bool includes_move(GenerationMode mode, Move move) {
+    switch (mode) {
+        case GenerationMode::CAPTURES: return move.is_capture();
+        case GenerationMode::QUIETS:   return !move.is_capture();
+        case GenerationMode::NOISY:    return move.is_capture() || move.is_promotion();
+        case GenerationMode::ALL:      return true;
+    }
+    return false;
+}
+
+inline void emit_move(MoveList& list, GenerationMode mode, Move move) {
+    if (includes_move(mode, move))
+        list.add(move);
+}
+
+void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode) {
     Color us = board.get_side_to_move();
     Color them = (Color)(us ^ 1);
 
@@ -303,97 +466,27 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
     U64 enemy_occ = board.get_occupancy(them);
     U64 empty = ~board.get_occupancy(BOTH);
 
-    // 1. Pawn Moves
-    U64 pawns = board.get_pieces(us, PAWN);
-    while (pawns) {
-        int from = pop_lsb(pawns);
-        int r = from / 8;
-        int f = from % 8;
-
-        if (us == WHITE) {
-            // Single push
-            int to = from + 8;
-            if (to < 64 && (empty & (1ULL << to))) {
-                if (to >= 56) { // Promotion
-                    move_list.add(Move(from, to, FLAG_PROMO_KNIGHT));
-                    move_list.add(Move(from, to, FLAG_PROMO_BISHOP));
-                    move_list.add(Move(from, to, FLAG_PROMO_ROOK));
-                    move_list.add(Move(from, to, FLAG_PROMO_QUEEN));
-                } else {
-                    move_list.add(Move(from, to, FLAG_QUIET));
-                }
-
-                // Double push
-                int to2 = from + 16;
-                if (r == 1 && (empty & (1ULL << to2))) {
-                    move_list.add(Move(from, to2, FLAG_DOUBLE_PAWN));
-                }
-            }
-
-            // Normal attacks
-            U64 attacks = pawn_attacks[WHITE][from] & enemy_occ;
-            while (attacks) {
-                int target = pop_lsb(attacks);
-                if (target >= 56) { // Promotion capture
-                    move_list.add(Move(from, target, FLAG_PROMO_KNIGHT_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_BISHOP_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_ROOK_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_QUEEN_CAP));
-                } else {
-                    move_list.add(Move(from, target, FLAG_CAPTURE));
-                }
-            }
-
-            // En passant
-            int ep = board.get_en_passant_square();
-            if (ep != SQ_NONE) {
-                if (pawn_attacks[WHITE][from] & (1ULL << ep)) {
-                    move_list.add(Move(from, ep, FLAG_EP));
-                }
-            }
-        } else { // us == BLACK
-            // Single push
-            int to = from - 8;
-            if (to >= 0 && (empty & (1ULL << to))) {
-                if (to <= 7) { // Promotion
-                    move_list.add(Move(from, to, FLAG_PROMO_KNIGHT));
-                    move_list.add(Move(from, to, FLAG_PROMO_BISHOP));
-                    move_list.add(Move(from, to, FLAG_PROMO_ROOK));
-                    move_list.add(Move(from, to, FLAG_PROMO_QUEEN));
-                } else {
-                    move_list.add(Move(from, to, FLAG_QUIET));
-                }
-
-                // Double push
-                int to2 = from - 16;
-                if (r == 6 && (empty & (1ULL << to2))) {
-                    move_list.add(Move(from, to2, FLAG_DOUBLE_PAWN));
-                }
-            }
-
-            // Normal attacks
-            U64 attacks = pawn_attacks[BLACK][from] & enemy_occ;
-            while (attacks) {
-                int target = pop_lsb(attacks);
-                if (target <= 7) { // Promotion capture
-                    move_list.add(Move(from, target, FLAG_PROMO_KNIGHT_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_BISHOP_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_ROOK_CAP));
-                    move_list.add(Move(from, target, FLAG_PROMO_QUEEN_CAP));
-                } else {
-                    move_list.add(Move(from, target, FLAG_CAPTURE));
-                }
-            }
-
-            // En passant
-            int ep = board.get_en_passant_square();
-            if (ep != SQ_NONE) {
-                if (pawn_attacks[BLACK][from] & (1ULL << ep)) {
-                    move_list.add(Move(from, ep, FLAG_EP));
-                }
-            }
-        }
+    // 1. The setwise candidate is retained only as a debug differential
+    // oracle: it regressed release NPS, so production keeps the proven
+    // per-pawn emission path.
+#ifndef NDEBUG
+    MoveList pawn_setwise;
+    generate_pawn_moves_setwise(board, pawn_setwise);
+    MoveList pawn_oracle;
+    generate_pawn_moves_oracle(board, pawn_oracle);
+    assert(same_move_set(pawn_setwise, pawn_oracle));
+    for (int i = 0; i < pawn_oracle.count; ++i)
+        emit_move(move_list, mode, pawn_oracle.moves[i]);
+#else
+    if (mode == GenerationMode::ALL) {
+        generate_pawn_moves_oracle(board, move_list);
+    } else {
+        MoveList pawn_moves;
+        generate_pawn_moves_oracle(board, pawn_moves);
+        for (int i = 0; i < pawn_moves.count; ++i)
+            emit_move(move_list, mode, pawn_moves.moves[i]);
     }
+#endif
 
     // 2. Knight Moves
     U64 knights = board.get_pieces(us, KNIGHT);
@@ -404,11 +497,11 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
         U64 quiets = attacks & empty;
         while (captures) {
             int to = pop_lsb(captures);
-            move_list.add(Move(from, to, FLAG_CAPTURE));
+            emit_move(move_list, mode, Move(from, to, FLAG_CAPTURE));
         }
         while (quiets) {
             int to = pop_lsb(quiets);
-            move_list.add(Move(from, to, FLAG_QUIET));
+            emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -421,11 +514,11 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
         U64 quiets = attacks & empty;
         while (captures) {
             int to = pop_lsb(captures);
-            move_list.add(Move(from, to, FLAG_CAPTURE));
+            emit_move(move_list, mode, Move(from, to, FLAG_CAPTURE));
         }
         while (quiets) {
             int to = pop_lsb(quiets);
-            move_list.add(Move(from, to, FLAG_QUIET));
+            emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -438,11 +531,11 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
         U64 quiets = attacks & empty;
         while (captures) {
             int to = pop_lsb(captures);
-            move_list.add(Move(from, to, FLAG_CAPTURE));
+            emit_move(move_list, mode, Move(from, to, FLAG_CAPTURE));
         }
         while (quiets) {
             int to = pop_lsb(quiets);
-            move_list.add(Move(from, to, FLAG_QUIET));
+            emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -455,11 +548,11 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
         U64 quiets = attacks & empty;
         while (captures) {
             int to = pop_lsb(captures);
-            move_list.add(Move(from, to, FLAG_CAPTURE));
+            emit_move(move_list, mode, Move(from, to, FLAG_CAPTURE));
         }
         while (quiets) {
             int to = pop_lsb(quiets);
-            move_list.add(Move(from, to, FLAG_QUIET));
+            emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
     }
 
@@ -472,11 +565,11 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
         U64 quiets = attacks & empty;
         while (captures) {
             int to = pop_lsb(captures);
-            move_list.add(Move(from, to, FLAG_CAPTURE));
+            emit_move(move_list, mode, Move(from, to, FLAG_CAPTURE));
         }
         while (quiets) {
             int to = pop_lsb(quiets);
-            move_list.add(Move(from, to, FLAG_QUIET));
+            emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
 
         // Castling rights checking
@@ -486,7 +579,7 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
             if (rights & WHITE_OO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_F1) | (1ULL << SQ_G1)))) {
                     if (!board.is_square_attacked(SQ_E1, BLACK) && !board.is_square_attacked(SQ_F1, BLACK)) {
-                        move_list.add(Move(SQ_E1, SQ_G1, FLAG_KING_CASTLE));
+                        emit_move(move_list, mode, Move(SQ_E1, SQ_G1, FLAG_KING_CASTLE));
                     }
                 }
             }
@@ -494,7 +587,7 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
             if (rights & WHITE_OOO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_D1) | (1ULL << SQ_C1) | (1ULL << SQ_B1)))) {
                     if (!board.is_square_attacked(SQ_E1, BLACK) && !board.is_square_attacked(SQ_D1, BLACK)) {
-                        move_list.add(Move(SQ_E1, SQ_C1, FLAG_QUEEN_CASTLE));
+                        emit_move(move_list, mode, Move(SQ_E1, SQ_C1, FLAG_QUEEN_CASTLE));
                     }
                 }
             }
@@ -503,7 +596,7 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
             if (rights & BLACK_OO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_F8) | (1ULL << SQ_G8)))) {
                     if (!board.is_square_attacked(SQ_E8, WHITE) && !board.is_square_attacked(SQ_F8, WHITE)) {
-                        move_list.add(Move(SQ_E8, SQ_G8, FLAG_KING_CASTLE));
+                        emit_move(move_list, mode, Move(SQ_E8, SQ_G8, FLAG_KING_CASTLE));
                     }
                 }
             }
@@ -511,10 +604,33 @@ void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
             if (rights & BLACK_OOO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_D8) | (1ULL << SQ_C8) | (1ULL << SQ_B8)))) {
                     if (!board.is_square_attacked(SQ_E8, WHITE) && !board.is_square_attacked(SQ_D8, WHITE)) {
-                        move_list.add(Move(SQ_E8, SQ_C8, FLAG_QUEEN_CASTLE));
+                        emit_move(move_list, mode, Move(SQ_E8, SQ_C8, FLAG_QUEEN_CASTLE));
                     }
                 }
             }
         }
     }
+}
+
+void generate_pseudo_legal_moves(const Board& board, MoveList& move_list) {
+    generate_moves(board, move_list, GenerationMode::ALL);
+}
+
+void generate_capture_moves(const Board& board, MoveList& move_list) {
+    generate_moves(board, move_list, GenerationMode::CAPTURES);
+}
+
+void generate_quiet_moves(const Board& board, MoveList& move_list) {
+    generate_moves(board, move_list, GenerationMode::QUIETS);
+}
+
+void generate_noisy_moves(const Board& board, MoveList& move_list) {
+    generate_moves(board, move_list, GenerationMode::NOISY);
+}
+
+void generate_evasion_moves(const Board& board, MoveList& move_list) {
+    // Legality filtering in make_move()/is_move_legal() removes candidates
+    // that do not evade check.  Keeping the oracle result here provides a
+    // correctness boundary before introducing the dedicated fast backend.
+    generate_moves(board, move_list, GenerationMode::ALL);
 }

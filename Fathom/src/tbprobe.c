@@ -739,10 +739,8 @@ static void init_tb(char *str)
       TB_MaxCardinalityDTM = be->num;
     }
 
-#if !defined(__cplusplus) || (__cplusplus < 202002L)
   for (int type = 0; type < 3; type++)
     atomic_init(&be->ready[type], false);
-#endif
 
   if (!be->hasPawns) {
     int j = 0;
@@ -977,6 +975,9 @@ void tb_free(void)
   tb_init("");
   free(pieceEntry);
   free(pawnEntry);
+  pieceEntry = NULL;
+  pawnEntry = NULL;
+  tbNumPiece = tbNumPawn = 0;
 }
 
 static const int8_t OffDiag[] = {

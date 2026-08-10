@@ -4,6 +4,8 @@
 #include "movegen.h"
 #include "search.h"
 #include "tt.h"
+#include "nnue.h"
+#include "build_info.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -16,9 +18,10 @@
 #include <cstring>
 #include <iomanip>
 #include <memory>
-
-// External function declarations from search.cpp
-int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, bool is_pv, bool in_null_move_search = false, int parent_eval_1 = INFINITY_SCORE, int parent_eval_2 = INFINITY_SCORE, Move excluded_move = Move(), int double_ext = 0);
+#include <cmath>
+#include <sstream>
+#include <limits>
+#include <filesystem>
 
 // Enforce 32-byte memory packing layout required by bullet trainers
 #pragma pack(push, 1)
@@ -33,6 +36,9 @@ struct BulletChessBoard {
 };
 #pragma pack(pop)
 
+static_assert(sizeof(BulletChessBoard) == 32,
+              "Bullet datagen records must remain exactly 32 bytes");
+
 // Tracking buffers for in-flight positions prior to game termination
 struct HarvestedPosition {
     BulletChessBoard packed;
@@ -43,6 +49,129 @@ struct HarvestedPosition {
 std::mutex file_mutex;
 std::atomic<long long> global_positions_saved(0);
 std::atomic<long long> global_total_games(0);
+std::atomic<long long> global_total_game_plies(0);
+std::atomic<long long> global_win_adjudications(0);
+std::atomic<long long> global_draw_adjudications(0);
+std::atomic<bool> datagen_failed(false);
+
+std::string json_escape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (unsigned char c : value) {
+        if (c == '\\') escaped += "\\\\";
+        else if (c == '"') escaped += "\\\"";
+        else if (c == '\n') escaped += "\\n";
+        else if (c == '\r') escaped += "\\r";
+        else if (c == '\t') escaped += "\\t";
+        else if (c >= 0x20) escaped += static_cast<char>(c);
+    }
+    return escaped;
+}
+
+std::string fnv1a64(const void* bytes, size_t size) {
+    const auto* data = static_cast<const uint8_t*>(bytes);
+    uint64_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream output;
+    output << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return output.str();
+}
+
+std::string file_fingerprint(const std::string& path) {
+    if (path.empty()) return "none";
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) return "unavailable";
+    uint64_t hash = 14695981039346656037ULL;
+    char buffer[16384];
+    while (input.read(buffer, sizeof(buffer)) || input.gcount() > 0) {
+        const auto count = static_cast<size_t>(input.gcount());
+        for (size_t i = 0; i < count; ++i) {
+            hash ^= static_cast<uint8_t>(buffer[i]);
+            hash *= 1099511628211ULL;
+        }
+    }
+    std::ostringstream output;
+    output << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return output.str();
+}
+
+std::string datagen_configuration(const DatagenOptions& options, int threads,
+                                  const std::string& engine_hash,
+                                  const std::string& book_hash) {
+    std::ostringstream config;
+    config << "bullet-v1|record=32|seed=" << options.seed << "|threads=" << threads
+           << "|buffer=" << options.buffer_positions << "|tt=" << options.tt_mb_per_worker
+           << "|maxply=" << options.max_game_ply << "|engine=" << engine_hash
+           << "|network=" << g_nnue.network_fingerprint() << "|book=" << book_hash
+           << "|opening_pool=3|opening_depth=3|search_depth=4"
+           << "|win=1000x4@ply10|draw=10x10@ply40";
+    const std::string value = config.str();
+    return fnv1a64(value.data(), value.size());
+}
+
+bool write_datagen_manifest(const std::string& path, const std::string& output_path,
+                            const DatagenOptions& options, int threads,
+                            long long target, long long records,
+                            const std::string& engine_hash,
+                            const std::string& book_hash,
+                            const std::string& configuration,
+                            const char* status) {
+    const std::filesystem::path destination(path);
+    std::error_code directory_error;
+    if (destination.has_parent_path())
+        std::filesystem::create_directories(destination.parent_path(), directory_error);
+    if (directory_error) return false;
+    const std::filesystem::path temporary = destination.string() + ".tmp";
+    std::ofstream manifest(temporary, std::ios::trunc);
+    if (!manifest.is_open()) return false;
+    manifest << "{\n"
+             << "  \"schema\": \"coco-datagen-manifest-v1\",\n"
+             << "  \"status\": \"" << status << "\",\n"
+             << "  \"configuration_fingerprint\": \"" << configuration << "\",\n"
+             << "  \"output\": \"" << json_escape(output_path) << "\",\n"
+             << "  \"record_schema\": \"bullet-chessboard-v1\",\n"
+             << "  \"record_bytes\": 32,\n"
+             << "  \"target_records\": " << target << ",\n"
+             << "  \"exact_records\": " << records << ",\n"
+             << "  \"seed\": " << options.seed << ",\n"
+             << "  \"threads\": " << threads << ",\n"
+             << "  \"buffer_positions\": " << options.buffer_positions << ",\n"
+             << "  \"tt_mb_per_worker\": " << options.tt_mb_per_worker << ",\n"
+             << "  \"max_game_ply\": " << options.max_game_ply << ",\n"
+             << "  \"engine\": \"" << json_escape(options.engine_path) << "\",\n"
+             << "  \"engine_fnv1a64\": \"" << engine_hash << "\",\n"
+             << "  \"build_arch\": \"" << COCO_BUILD_ARCH << "\",\n"
+             << "  \"embedded_nnue_sha256\": \"" << COCO_EMBEDDED_NNUE_SHA256 << "\",\n"
+             << "  \"active_nnue\": \"" << g_nnue.network_fingerprint() << "\",\n"
+             << "  \"opening_book\": "
+             << (options.opening_book_path.empty() ? "null" : "\"" + json_escape(options.opening_book_path) + "\"") << ",\n"
+             << "  \"opening_book_fnv1a64\": \"" << book_hash << "\",\n"
+             << "  \"search\": {\"opening_pool\": 3, \"opening_depth\": 3, \"main_depth\": 4},\n"
+             << "  \"adjudication\": {\"win_cp\": 1000, \"win_count\": 4, \"win_min_ply\": 10, "
+                "\"draw_cp\": 10, \"draw_count\": 10, \"draw_min_ply\": 40}\n"
+             << "}\n";
+    manifest.close();
+    if (!manifest.good()) return false;
+    std::error_code error;
+    std::filesystem::remove(destination, error);
+    error.clear();
+    std::filesystem::rename(temporary, destination, error);
+    return !error;
+}
+
+bool manifest_matches_configuration(const std::string& path,
+                                    const std::string& configuration) {
+    std::ifstream input(path);
+    if (!input.is_open()) return false;
+    const std::string contents((std::istreambuf_iterator<char>(input)),
+                               std::istreambuf_iterator<char>());
+    const std::string expected = "\"configuration_fingerprint\": \""
+        + configuration + "\"";
+    return contents.find(expected) != std::string::npos;
+}
 
 // Portable byte swapper for 64-bit integers
 inline uint64_t swap_bytes(uint64_t v) {
@@ -107,7 +236,6 @@ void pack_board_state(const Board& board, int16_t score, float game_result_white
         bbs[0] = bbs[1];
         bbs[1] = temp;
 
-        score = -score;
         result = 1.0f - result;
     }
 
@@ -172,200 +300,464 @@ void pack_board_state(const Board& board, int16_t score, float game_result_white
     cb.extra[2] = 0;
 }
 
-void datagen_worker(long long target, std::string output_path, int thread_id) {
-    // Setup thread-isolated random distribution pipelines for opening choices
-    std::mt19937 generator(std::random_device{}() + thread_id);
-    
-    // Allocate the large Board objects on the heap to prevent stack overflow
+double datagen_soft_wdl_target(int16_t score, uint8_t result,
+                               double lambda, double scale) {
+    lambda = std::clamp(lambda, 0.0, 1.0);
+    scale = std::max(scale, 1.0);
+    const double x = std::clamp(static_cast<double>(score) / scale, -40.0, 40.0);
+    const double eval_wdl = 1.0 / (1.0 + std::exp(-x));
+    const double hard_wdl = std::clamp(static_cast<double>(result) / 2.0, 0.0, 1.0);
+    return lambda * eval_wdl + (1.0 - lambda) * hard_wdl;
+}
+
+bool validate_datagen_file(const std::string& path, std::string* error) {
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input.is_open()) {
+        if (error) *error = "could not open file";
+        return false;
+    }
+    const std::streamoff size = input.tellg();
+    if (size < 0 || size % static_cast<std::streamoff>(sizeof(BulletChessBoard)) != 0) {
+        if (error) *error = "file size is not a multiple of 32 bytes";
+        return false;
+    }
+    input.seekg(0);
+    BulletChessBoard record{};
+    while (input.read(reinterpret_cast<char*>(&record), sizeof(record))) {
+        if (record.result > 2 || record.ksq >= 64 || record.opp_ksq >= 64) {
+            if (error) *error = "record contains an invalid result or king square";
+            return false;
+        }
+        if (record.extra[0] || record.extra[1] || record.extra[2]) {
+            if (error) *error = "record padding is non-zero";
+            return false;
+        }
+        for (uint8_t packed : record.pcs) {
+            const uint8_t lo = packed & 0x0F;
+            const uint8_t hi = packed >> 4;
+            const auto valid_piece = [](uint8_t piece) {
+                return piece <= 5 || (piece >= 8 && piece <= 13);
+            };
+            if (!valid_piece(lo) || !valid_piece(hi)) {
+                if (error) *error = "record contains an invalid packed piece";
+                return false;
+            }
+        }
+    }
+    return input.eof();
+}
+
+std::vector<std::string> load_opening_book(const std::string& path) {
+    std::vector<std::string> openings;
+    if (path.empty()) return openings;
+    std::ifstream input(path);
+    if (!input.is_open()) return openings;
+
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream stream(line);
+        std::string fields[6];
+        bool complete = true;
+        for (std::string& field : fields)
+            complete = complete && static_cast<bool>(stream >> field);
+        if (!complete) continue;
+        std::string fen = fields[0];
+        for (int i = 1; i < 6; ++i) fen += " " + fields[i];
+
+        Board board;
+        if (!board.parse_fen(fen)) continue;
+        if (count_bits(board.get_pieces(WHITE, KING)) != 1
+            || count_bits(board.get_pieces(BLACK, KING)) != 1)
+            continue;
+        MoveList moves;
+        generate_pseudo_legal_moves(board, moves);
+        const LegalityMasks masks = board.get_legality_masks();
+        bool has_legal_move = false;
+        for (int i = 0; i < moves.count; ++i) {
+            if (board.is_move_legal(moves.moves[i], masks)) {
+                has_legal_move = true;
+                break;
+            }
+        }
+        if (has_legal_move) openings.push_back(std::move(fen));
+    }
+    return openings;
+}
+
+int fen_game_ply(const std::string& fen) {
+    std::istringstream stream(fen);
+    std::string board, side, castling, ep;
+    int halfmove = 0;
+    int fullmove = 1;
+    if (!(stream >> board >> side >> castling >> ep >> halfmove >> fullmove))
+        return 0;
+    return std::max(0, 2 * (fullmove - 1) + (side == "b" ? 1 : 0));
+}
+
+bool flush_thread_buffer(std::vector<BulletChessBoard>& buffer,
+                         long long target, const std::string& output_path) {
+    if (buffer.empty()) return true;
+    std::lock_guard<std::mutex> lock(file_mutex);
+    const long long saved = global_positions_saved.load(std::memory_order_relaxed);
+    const long long remaining = std::max(0LL, target - saved);
+    const size_t write_count = std::min(buffer.size(), static_cast<size_t>(remaining));
+    if (write_count == 0) {
+        buffer.clear();
+        return true;
+    }
+
+    std::ofstream output(output_path, std::ios::binary | std::ios::app);
+    if (!output.is_open()) {
+        datagen_failed.store(true, std::memory_order_relaxed);
+        return false;
+    }
+    output.write(reinterpret_cast<const char*>(buffer.data()),
+                 static_cast<std::streamsize>(write_count * sizeof(BulletChessBoard)));
+    output.flush();
+    if (!output.good()) {
+        datagen_failed.store(true, std::memory_order_relaxed);
+        return false;
+    }
+    global_positions_saved.fetch_add(static_cast<long long>(write_count),
+                                     std::memory_order_relaxed);
+    buffer.clear();
+    return true;
+}
+
+void datagen_worker(long long target, const std::string& output_path, int thread_id,
+                    const DatagenOptions& options,
+                    const std::vector<std::string>& openings,
+                    size_t flush_threshold) {
+    const uint64_t stream_seed = options.seed
+        + 0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(thread_id + 1);
+    std::mt19937_64 generator(stream_seed);
+
+    TranspositionTable private_tt;
+    private_tt.resize(options.tt_mb_per_worker);
+    Search::set_thread_tt(&private_tt);
+
     auto board_ptr = std::make_unique<Board>();
     Board& board = *board_ptr;
-
     auto temp_board_ptr = std::make_unique<Board>();
     Board& temp_board = *temp_board_ptr;
-    
-    while (global_positions_saved.load() < target) {
-        // Reset board to starting position
-        board.parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-        
-        std::vector<HarvestedPosition> game_buffer;
+
+    std::vector<BulletChessBoard> thread_buffer;
+    thread_buffer.reserve(flush_threshold + 256);
+
+    while (!datagen_failed.load(std::memory_order_relaxed)
+           && global_positions_saved.load(std::memory_order_relaxed) < target) {
         int game_ply = 0;
-        float game_result = 0.5f; // Default to Draw
-        
-        // Execute a complete self-play game sequence loop
-        while (game_ply < 250) {
-            // Generate legal moves
+        if (openings.empty()) {
+            board.parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        } else {
+            std::uniform_int_distribution<size_t> opening_dist(0, openings.size() - 1);
+            const std::string& opening = openings[opening_dist(generator)];
+            board.parse_fen(opening);
+            game_ply = fen_game_ply(opening);
+        }
+
+        Search::reset_worker_search_state(board.get_side_to_move(), thread_id);
+        private_tt.new_search();
+
+        std::vector<HarvestedPosition> game_buffer;
+        float game_result = 0.5f;
+        int win_count = 0;
+        int draw_count = 0;
+        int predicted_winner = -1;
+        bool abandon_game = false;
+
+        while (game_ply < options.max_game_ply) {
+            if (global_positions_saved.load(std::memory_order_relaxed) >= target
+                || datagen_failed.load(std::memory_order_relaxed)) {
+                abandon_game = true;
+                break;
+            }
+
             std::vector<Move> legal_moves;
             MoveList list;
             generate_pseudo_legal_moves(board, list);
             for (int i = 0; i < list.count; ++i) {
-                Move m = list.moves[i];
-                if (board.make_move(m)) {
-                    legal_moves.push_back(m);
-                    board.unmake_move(m);
+                const Move move = list.moves[i];
+                if (board.make_move(move)) {
+                    legal_moves.push_back(move);
+                    board.unmake_move(move);
                 }
             }
 
             if (legal_moves.empty()) {
-                if (in_check(board)) {
-                    // Checkmate determined
-                    game_result = (board.get_side_to_move() == WHITE) ? 0.0f : 1.0f;
-                } else {
-                    game_result = 0.5f; // Stalemate draw
-                }
+                game_result = in_check(board)
+                    ? (board.get_side_to_move() == WHITE ? 0.0f : 1.0f)
+                    : 0.5f;
                 break;
             }
-            
-            // Check for basic draw rule mitigations (repetition, 50-move rule, or king vs king)
-            if (board.is_repetition() || board.get_halfmove_clock() >= 100 || count_bits(board.get_occupancy(2)) == 2) {
+            if (board.is_repetition() || board.get_halfmove_clock() >= 100
+                || count_bits(board.get_occupancy(BOTH)) == 2) {
                 game_result = 0.5f;
                 break;
             }
 
             Move chosen_move;
             int eval_score = 0;
-
             if (game_ply < 8) {
-                // Opening variance: random selection from top 3 moves
                 std::vector<std::pair<Move, int>> scored_moves;
-                for (const auto& m : legal_moves) {
+                scored_moves.reserve(legal_moves.size());
+                for (Move move : legal_moves) {
                     temp_board = board;
-                    temp_board.make_move(m);
-                    int m_score = -alpha_beta(temp_board, -50000, 50000, 3, 1, false, false);
-                    scored_moves.push_back({m, m_score});
+                    if (!temp_board.make_move(move)) continue;
+                    const int move_score = -alpha_beta(temp_board, -INFINITY_SCORE,
+                        INFINITY_SCORE, 3, 1, Search::NodeType::NON_PV, false);
+                    scored_moves.push_back({move, move_score});
                 }
-                
-                // Sort moves based on score strength descending
-                std::sort(scored_moves.begin(), scored_moves.end(), [](const auto& a, const auto& b) {
-                    return a.second > b.second;
-                });
-                
-                size_t selection_pool = std::min(size_t(3), scored_moves.size());
-                std::uniform_int_distribution<size_t> dist(0, selection_pool - 1);
-                int r = dist(generator);
-                chosen_move = scored_moves[r].first;
-                eval_score = scored_moves[r].second;
+                if (scored_moves.empty()) {
+                    datagen_failed.store(true, std::memory_order_relaxed);
+                    abandon_game = true;
+                    break;
+                }
+                std::stable_sort(scored_moves.begin(), scored_moves.end(),
+                    [](const auto& lhs, const auto& rhs) {
+                        return lhs.second > rhs.second;
+                    });
+                const size_t pool = std::min<size_t>(3, scored_moves.size());
+                std::uniform_int_distribution<size_t> choice(0, pool - 1);
+                const auto& selected = scored_moves[choice(generator)];
+                chosen_move = selected.first;
+                eval_score = selected.second;
             } else {
-                // Standard production play: search at depth 4
-                eval_score = alpha_beta(board, -50000, 50000, 4, 0, true, false);
-                
-                // Retrieve best move from transposition table
-                int temp_score;
-                tt.probe(board.get_hash_key(), temp_score, chosen_move, 4, -50000, 50000, 0);
-
-                if (chosen_move.is_none()) {
-                    chosen_move = legal_moves[0];
-                }
+                eval_score = alpha_beta(board, -INFINITY_SCORE, INFINITY_SCORE,
+                                        4, 0, Search::NodeType::PV, false);
+                int tt_score = 0;
+                private_tt.probe(board.get_hash_key(), tt_score, chosen_move, 4,
+                                 -INFINITY_SCORE, INFINITY_SCORE, 0);
             }
-            
-            // Extract quiet states starting after the opening phase configuration boundary
-            if (game_ply >= 8 && !in_check(board) && !has_legal_captures(board, temp_board)) {
-                BulletChessBoard packed;
-                pack_board_state(board, (int16_t)eval_score, 0.5f, packed); // 0.5f is dummy result
+
+            if (std::find(legal_moves.begin(), legal_moves.end(), chosen_move)
+                == legal_moves.end())
+                chosen_move = legal_moves.front();
+
+            if (game_ply >= 8 && !in_check(board)
+                && !has_legal_captures(board, temp_board)) {
+                BulletChessBoard packed{};
+                pack_board_state(board, static_cast<int16_t>(std::clamp(
+                    eval_score, static_cast<int>(std::numeric_limits<int16_t>::min()),
+                    static_cast<int>(std::numeric_limits<int16_t>::max()))),
+                    0.5f, packed);
                 game_buffer.push_back({packed, board.get_side_to_move()});
             }
-            
-            board.make_move(chosen_move);
-            game_ply++;
-        }
-        
-        // Game has terminated cleanly, batch-commit harvested positions using a thread lock
-        if (!game_buffer.empty()) {
-            std::lock_guard<std::mutex> lock(file_mutex);
-            
-            // Re-verify counter constraint under lock boundary protection
-            if (global_positions_saved.load() >= target) break;
-            
-            // Assign final outcomes to all harvested positions
-            for (auto& hb : game_buffer) {
-                float res = game_result;
-                if (hb.stm == BLACK) {
-                    res = 1.0f - res;
+
+            if (game_ply >= 10 && std::abs(eval_score) > 1000) {
+                const int winner = eval_score > 0
+                    ? (board.get_side_to_move() == WHITE ? 1 : 0)
+                    : (board.get_side_to_move() == WHITE ? 0 : 1);
+                if (winner == predicted_winner) ++win_count;
+                else {
+                    predicted_winner = winner;
+                    win_count = 1;
                 }
-                hb.packed.result = (uint8_t)(2.0f * res + 0.5f);
+                if (win_count >= 4) {
+                    game_result = winner ? 1.0f : 0.0f;
+                    global_win_adjudications.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+            } else {
+                win_count = 0;
+                predicted_winner = -1;
             }
 
-            std::ofstream out_file(output_path, std::ios::binary | std::ios::app);
-            if (out_file.is_open()) {
-                for (const auto& entry : game_buffer) {
-                    out_file.write(reinterpret_cast<const char*>(&entry.packed), sizeof(BulletChessBoard));
+            if (game_ply >= 40 && std::abs(eval_score) < 10) {
+                if (++draw_count >= 10) {
+                    game_result = 0.5f;
+                    global_draw_adjudications.fetch_add(1, std::memory_order_relaxed);
+                    break;
                 }
-                out_file.close();
-                
-                global_positions_saved += game_buffer.size();
-                global_total_games++;
+            } else {
+                draw_count = 0;
+            }
+
+            if (!board.make_move(chosen_move)) {
+                datagen_failed.store(true, std::memory_order_relaxed);
+                abandon_game = true;
+                break;
+            }
+            ++game_ply;
+        }
+
+        global_total_games.fetch_add(1, std::memory_order_relaxed);
+        global_total_game_plies.fetch_add(game_ply, std::memory_order_relaxed);
+        if (!abandon_game) {
+            for (HarvestedPosition& harvested : game_buffer) {
+                float result = game_result;
+                if (harvested.stm == BLACK) result = 1.0f - result;
+                harvested.packed.result = static_cast<uint8_t>(2.0f * result + 0.5f);
+                thread_buffer.push_back(harvested.packed);
             }
         }
+
+        if (thread_buffer.size() >= flush_threshold
+            && !flush_thread_buffer(thread_buffer, target, output_path))
+            break;
     }
+
+    flush_thread_buffer(thread_buffer, target, output_path);
+    Search::set_thread_tt(nullptr);
 }
 
-void run_datagen(long long target_positions, int num_threads, const std::string& output_path) {
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    // Check if file already exists and determine resume offset
+bool run_datagen(long long target_positions, int num_threads,
+                 const std::string& output_path, const DatagenOptions& options) {
+    if (target_positions <= 0 || num_threads <= 0 || num_threads > MAX_THREADS
+        || output_path.empty() || options.buffer_positions == 0
+        || options.tt_mb_per_worker == 0 || options.max_game_ply < 20) {
+        std::cerr << "[Datagen] Invalid target, thread count, path, buffer, TT, or ply limit.\n";
+        return false;
+    }
+
+    const auto start_time = std::chrono::high_resolution_clock::now();
     long long existing_positions = 0;
-    std::ifstream in_file(output_path, std::ios::binary | std::ios::ate);
-    if (in_file.is_open()) {
-        std::streampos size = in_file.tellg();
+    std::ifstream existing(output_path, std::ios::binary | std::ios::ate);
+    if (existing.is_open()) {
+        const std::streamoff size = existing.tellg();
+        if (size < 0 || size % static_cast<std::streamoff>(sizeof(BulletChessBoard)) != 0) {
+            std::cerr << "[Datagen] Refusing misaligned output file (record size is 32 bytes).\n";
+            return false;
+        }
         existing_positions = size / sizeof(BulletChessBoard);
-        in_file.close();
+    } else {
+        std::ofstream create(output_path, std::ios::binary | std::ios::app);
+        if (!create.is_open()) {
+            std::cerr << "[Datagen] Could not create output file.\n";
+            return false;
+        }
+    }
+
+    const std::vector<std::string> openings = load_opening_book(options.opening_book_path);
+    if (!options.opening_book_path.empty() && openings.empty()) {
+        std::cerr << "[Datagen] Opening book contained no valid FEN records.\n";
+        return false;
+    }
+
+    const std::string manifest_path = options.manifest_path.empty()
+        ? output_path + ".manifest.json"
+        : options.manifest_path;
+    const std::string engine_hash = file_fingerprint(options.engine_path);
+    const std::string book_hash = file_fingerprint(options.opening_book_path);
+    const std::string configuration = datagen_configuration(
+        options, num_threads, engine_hash, book_hash);
+
+    if (existing_positions > 0
+        && !manifest_matches_configuration(manifest_path, configuration)) {
+        std::cerr << "[Datagen] Refusing to append: the existing data has no compatible "
+                     "provenance manifest. Start a new output or restore its matching manifest.\n";
+        return false;
     }
 
     global_positions_saved.store(existing_positions, std::memory_order_relaxed);
+    global_total_games.store(0, std::memory_order_relaxed);
+    global_total_game_plies.store(0, std::memory_order_relaxed);
+    global_win_adjudications.store(0, std::memory_order_relaxed);
+    global_draw_adjudications.store(0, std::memory_order_relaxed);
+    datagen_failed.store(false, std::memory_order_relaxed);
 
-    std::cout << "[Datagen] Configuration Rule Stacked -> Target: " << target_positions 
-              << " | Active Worker Threads: " << num_threads << std::endl;
+    std::cout << "[Datagen] Target: " << target_positions
+              << " | Threads: " << num_threads
+              << " | Seed: " << options.seed
+              << " | Buffer: " << options.buffer_positions
+              << " | Private TT: " << options.tt_mb_per_worker << " MB"
+              << " | Book positions: " << openings.size() << '\n';
 
-    if (existing_positions > 0) {
-        std::cout << "[Datagen] Resuming from existing file. Detected " << existing_positions 
-                  << " positions already saved." << std::endl;
-        if (existing_positions >= target_positions) {
-            std::cout << "[Datagen] Target already achieved!" << std::endl;
-            return;
-        }
+    if (!write_datagen_manifest(manifest_path, output_path, options, num_threads,
+                                target_positions, existing_positions, engine_hash,
+                                book_hash, configuration, "running")) {
+        std::cerr << "[Datagen] Could not write provenance manifest: "
+                  << manifest_path << '\n';
+        return false;
     }
-              
-    // Ensure search timeout does not trigger
+
+    if (existing_positions >= target_positions) {
+        std::cout << "[Datagen] Target already achieved at " << existing_positions << " positions.\n";
+        write_datagen_manifest(manifest_path, output_path, options, num_threads,
+                               target_positions, existing_positions, engine_hash,
+                               book_hash, configuration, "complete");
+        return true;
+    }
+
     Search::target_time = 0;
+    Search::soft_limit = 0;
+    Search::hard_limit = 0;
+    Search::node_limit = 0;
+    Search::time_check_mask = 1023;
     Search::b_abort.store(false, std::memory_order_relaxed);
 
+    const long long remaining = target_positions - existing_positions;
+    const size_t flush_threshold = std::max<size_t>(1, std::min<size_t>(
+        options.buffer_positions,
+        static_cast<size_t>((remaining + num_threads - 1) / num_threads)));
+
     std::vector<std::thread> workers;
-    
-    // Spawn configured worker threads natively
+    workers.reserve(num_threads);
     for (int i = 0; i < num_threads; ++i) {
-        workers.emplace_back(datagen_worker, target_positions, output_path, i);
+        workers.emplace_back(datagen_worker, target_positions,
+                             std::cref(output_path), i, std::cref(options),
+                             std::cref(openings), flush_threshold);
     }
-    
-    long long last_reported_positions = existing_positions;
-    // Main thread reporting loop monitors execution state metrics
-    while (global_positions_saved.load() < target_positions) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-        
-        long long current_positions = global_positions_saved.load();
-        auto current_time = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = current_time - start_time;
-        
-        if (current_positions >= last_reported_positions + 100000 || current_positions == target_positions) {
-            double speed = (current_positions - existing_positions) / elapsed.count();
-            double progress = (static_cast<double>(current_positions) / target_positions) * 100.0;
-            
-            std::cout << "[Datagen Progress] Harvested: " << current_positions << " / " << target_positions
-                      << " | Speed: " << static_cast<long long>(speed) << " pos/sec"
-                      << " | Progress: " << std::fixed << std::setprecision(2) << progress << "%"
-                      << " | Games Evaluated: " << global_total_games.load() << std::endl;
-                      
-            last_reported_positions = current_positions;
+
+    long long last_reported = existing_positions;
+    while (!datagen_failed.load(std::memory_order_relaxed)
+           && global_positions_saved.load(std::memory_order_relaxed) < target_positions) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const long long current = global_positions_saved.load(std::memory_order_relaxed);
+        if (current >= last_reported + 100000 || current == target_positions) {
+            const std::chrono::duration<double> elapsed
+                = std::chrono::high_resolution_clock::now() - start_time;
+            const double speed = (current - existing_positions) / elapsed.count();
+            const double progress = 100.0 * current / target_positions;
+            std::cout << "[Datagen Progress] " << current << " / " << target_positions
+                      << " | " << static_cast<long long>(speed) << " pos/sec"
+                      << " | " << std::fixed << std::setprecision(2) << progress << "%\n";
+            last_reported = current;
         }
     }
-    
-    // Synchronize workers to guarantee data flush integrity prior to closeout
-    for (auto& worker : workers) {
+
+    for (std::thread& worker : workers)
         if (worker.joinable()) worker.join();
+
+    if (datagen_failed.load(std::memory_order_relaxed)) {
+        std::cerr << "[Datagen] Worker failure; output stopped at "
+                  << global_positions_saved.load(std::memory_order_relaxed) << " records.\n";
+        write_datagen_manifest(manifest_path, output_path, options, num_threads,
+                               target_positions, global_positions_saved.load(), engine_hash,
+                               book_hash, configuration, "failed");
+        return false;
     }
-    
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> total_elapsed = end_time - start_time;
-    
-    std::cout << "\n[Datagen Complete] Successfully compiled " << global_positions_saved.load() 
-              << " positions into " << output_path << std::endl;
-    std::cout << "[Datagen Complete] Total Running Duration: " << total_elapsed.count() / 60.0 << " minutes." << std::endl;
+
+    std::string validation_error;
+    if (!validate_datagen_file(output_path, &validation_error)) {
+        std::cerr << "[Datagen] Record validation failed: " << validation_error << '\n';
+        write_datagen_manifest(manifest_path, output_path, options, num_threads,
+                               target_positions, global_positions_saved.load(), engine_hash,
+                               book_hash, configuration, "failed");
+        return false;
+    }
+
+    const std::chrono::duration<double> elapsed
+        = std::chrono::high_resolution_clock::now() - start_time;
+    const long long games = global_total_games.load(std::memory_order_relaxed);
+    const double average_ply = games > 0
+        ? static_cast<double>(global_total_game_plies.load(std::memory_order_relaxed)) / games
+        : 0.0;
+    const double speed = (global_positions_saved.load(std::memory_order_relaxed)
+                         - existing_positions) / std::max(0.001, elapsed.count());
+
+    std::cout << "[Datagen Complete] " << global_positions_saved.load(std::memory_order_relaxed)
+              << " records | " << static_cast<long long>(speed) << " pos/sec"
+              << " | Games: " << games << " | Avg ply: " << std::fixed
+              << std::setprecision(2) << average_ply
+              << " | W/L adjudications: " << global_win_adjudications.load()
+              << " | Draw adjudications: " << global_draw_adjudications.load() << '\n';
+    if (!write_datagen_manifest(manifest_path, output_path, options, num_threads,
+                                target_positions, global_positions_saved.load(), engine_hash,
+                                book_hash, configuration, "complete")) {
+        std::cerr << "[Datagen] Data completed but final provenance manifest could not be written.\n";
+        return false;
+    }
+    return true;
 }

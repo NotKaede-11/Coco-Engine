@@ -1,0 +1,104 @@
+name: Correctness and Portability
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-validation:
+    name: Engine, protocol, and perft (${{ matrix.comp }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        comp: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build portable x86-64 engine
+        run: make build ARCH=x86-64-popcnt COMP=${{ matrix.comp }}
+      - name: Verify network identity
+        run: >-
+          python testing/verify_nnue_file.py coco.nnue --l1-size 512
+          --sha256 392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055
+      - name: Verify runtime build identity
+        run: python testing/verify_build_identity.py ./coco-chess --arch x86-64-popcnt
+      - name: Verify deterministic search signature
+        run: python testing/verify_fixed_signature.py ./coco-chess --nodes 731322
+      - name: Verify UCI options
+        run: python testing/validate_options.py ./coco-chess
+      - name: Verify UCI search limits
+        run: python testing/verify_uci_limits.py ./coco-chess
+      - name: Verify UCI lifecycle and malformed-input handling
+        run: python testing/uci_conformance.py ./coco-chess
+      - name: Verify perft through depth 3
+        env:
+          COCO_ENGINE: ${{ github.workspace }}/coco-chess
+        run: python testing/run_perft_suite.py 3
+      - name: Verify noisy-opening regression fixtures
+        run: python testing/noisy_opening_regression.py --engine ./coco-chess
+      - name: Verify datagen provenance and safe resume
+        run: python testing/datagen_manifest_test.py --engine ./coco-chess
+
+  cpp-correctness:
+    name: C++ fixtures with ASan and UBSan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate embedded NNUE header
+        run: python scripts/make_nnue_header.py
+      - name: Build and run correctness fixtures
+        run: python testing/run_cpp_tests.py --sanitizers
+
+  windows-cross-build:
+    name: Windows cross-compile
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - name: Build Windows AVX2 executable
+        run: make build ARCH=x86-64-avx2 COMP=mingw
+      - name: Confirm release artifact
+        run: test -s coco-chess.exe
+
+  windows-native-smoke:
+    name: Windows native build and execution
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Build natively with MinGW UCRT
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+          cmd /c build.bat
+      - name: Execute protocol and fixed-signature smoke tests
+        shell: pwsh
+        run: |
+          python testing/verify_build_identity.py .\coco-chess.exe --arch native
+          python testing/validate_options.py .\coco-chess.exe
+          python testing/verify_fixed_signature.py .\coco-chess.exe --nodes 731322

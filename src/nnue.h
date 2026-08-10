@@ -36,6 +36,9 @@ public:
     // Loads neural network weights from a file
     bool load_network(const std::string& filename);
 
+    const std::string& network_fingerprint() const { return active_network_fingerprint; }
+    const std::string& network_source() const { return active_network_source; }
+
     // Evaluates the board position from scratch using NNUE.
     int evaluate_nnue(const Board& board) const;
 
@@ -96,6 +99,8 @@ private:
     alignas(32) int16_t layer1_biases[L1_SIZE];
     alignas(32) int16_t layer2_weights[2 * L1_SIZE];
     int32_t layer2_bias;
+    std::string active_network_fingerprint;
+    std::string active_network_source;
 };
 
 // Global NNUE evaluator instance
