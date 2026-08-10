@@ -38,7 +38,7 @@ FATHOM    = Fathom/src/tbprobe.c
 INCLUDES  = -IFathom/src
 
 # --- Base flags (always applied) ---
-CXXFLAGS  = -O3 -pthread -std=c++23 -DL1_SIZE=512 -DNDEBUG
+CXXFLAGS  = -O3 -pthread -std=c++20 -DL1_SIZE=512 -DNDEBUG
 LDFLAGS   = -pthread
 PYTHON   ?= python3
 

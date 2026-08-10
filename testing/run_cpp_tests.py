@@ -58,7 +58,7 @@ def main() -> int:
         environment["PATH"] = str(compiler_path.resolve().parent) + os.pathsep + environment.get("PATH", "")
 
     flags = [
-        "-std=c++23", "-pthread", "-DL1_SIZE=512", "-DCOCO_TESTING",
+        "-std=c++20", "-pthread", "-DL1_SIZE=512", "-DCOCO_TESTING",
         "-IFathom/src", "-O1", "-g",
     ]
     if args.sanitizers:

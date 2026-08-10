@@ -9,7 +9,7 @@
 
   [![Pre-release][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
-  [![C++23][cpp-badge]][source-link]
+  [![C++20][cpp-badge]][source-link]
 
   [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
@@ -17,7 +17,7 @@
 
 ---
 
-Coco is a cross-platform chess engine written in C++23. Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
+Coco is a cross-platform chess engine written in C++20. Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
 
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
@@ -115,7 +115,7 @@ The most useful options exposed to chess GUIs are:
 
 ## Build from source
 
-The build requires a C++23-capable compiler and Python for generating the embedded network header. Release builds embed `coco.nnue` into the executable.
+The build requires a C++20-capable compiler and Python for generating the embedded network header. Release builds embed `coco.nnue` into the executable.
 
 ### Windows
 
@@ -192,6 +192,6 @@ Coco is free software distributed under the [GNU General Public License v3][lice
 [release-link]: https://github.com/NotKaede-11/Coco-Engine/releases
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE
-[cpp-badge]: https://img.shields.io/badge/C%2B%2B-23-00599C?style=flat-square&logo=cplusplus
+[cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus
 [source-link]: src
 [issues-link]: https://github.com/NotKaede-11/Coco-Engine/issues
