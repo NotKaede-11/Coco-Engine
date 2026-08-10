@@ -75,8 +75,10 @@ endif
 # ===========================================================================
 
 ifeq ($(COMP),mingw)
-    # Cross-compile Windows .exe from Linux using MinGW
-    CXX      = x86_64-w64-mingw32-g++
+    # Cross-compile Windows .exe from Linux using MinGW's POSIX thread model.
+    # Ubuntu's unsuffixed alternative may select the win32 model, which does
+    # not provide the std::thread/std::mutex implementation Coco requires.
+    CXX      = x86_64-w64-mingw32-g++-posix
     EXE     := $(EXE).exe
     LDFLAGS += -static -static-libgcc -static-libstdc++
     CXXFLAGS += -DWIN32

@@ -19,7 +19,7 @@ This development pre-release rebuilds Coco's correctness foundation and expands 
 
 ### Changed
 
-- **Compiler Compatibility:** Standardized release, local, and test builds on C++20, matching Coco's actual language-feature requirements and supporting a wider range of Clang and MinGW toolchains.
+- **Compiler Compatibility:** Standardized release, local, and test builds on C++20, matching Coco's actual language-feature requirements, and selected MinGW's POSIX thread model for portable `std::thread` support.
 - **Board and NNUE State:** Replaced per-node accumulator copies with a checked accumulator stack, incremental occupancy updates, and network-safe position rebuilds after `EvalFile` reload.
 - **Transposition Table:** Added clustered cache-line storage, generation aging, power-of-two indexing, lockless verification, correct fail-soft bounds, move retention on shallow hits, mate-score conversion, and clear/hashfull support.
 - **Evaluation Network Packaging:** The production NNUE is embedded in release binaries; `EvalFile` remains available for deliberate runtime replacement.
