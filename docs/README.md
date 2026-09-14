@@ -6,4 +6,4 @@
 - [SPRT results](evidence/phase-2.5-sprt-2026-09-14.md) — test configuration and recorded outcome.
 - [Release procedure](RELEASING.md) — build validation, packaging and publication steps.
 
-Version 1.5.0 is not yet published. See the [main README](../README.md) for setup and UCI configuration, and the [changelog](../CHANGELOG.md) for version history.
+The current stable version is [v1.5.0](https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0). See the [main README](../README.md) for setup and UCI configuration, and the [changelog](../CHANGELOG.md) for version history.

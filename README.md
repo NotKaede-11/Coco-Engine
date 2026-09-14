@@ -7,7 +7,7 @@
 
   **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
 
-  [![Release target: v1.5.0][release-badge]][release-link]
+  [![Stable release: v1.5.0][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
@@ -22,13 +22,13 @@ Coco is a cross-platform chess engine written in C++20. Its search combines bitb
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
 
-## Release status
+## Coco 1.5.0
 
-Version **1.5.0 is being prepared and has not been published**. It adds guarded capture ProbCut, explicit principal variations, root-aware time allocation and parallel best-move voting to the earlier pre-release while retaining the current NNUE and original search defaults. The retained SPRT console log records a 1,092-game SPRT pass against the pre-release at `10+0.1`, Threads=1 and Hash=16.
+**Coco 1.5.0** combines a rebuilt search and board-state foundation with guarded capture ProbCut, explicit principal variations, root-aware time allocation and parallel best-move voting. It retains the existing 512-unit NNUE. The retained SPRT console log records a 1,092-game SPRT pass against the pre-release at `10+0.1`, Threads=1 and Hash=16.
 
-**Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations. Hosted platform checks remain pending.
+**Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations.
 
-See the [proposed release notes](docs/releases/v1.5.0.md) and [release checklist](docs/RELEASING.md).
+See the [release notes](docs/releases/v1.5.0.md) and [release checklist](docs/RELEASING.md).
 
 ## Quick start
 
@@ -192,8 +192,8 @@ Bug reports, test games, code review, and constructive feedback are welcome thro
 
 Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
 
-[release-badge]: https://img.shields.io/badge/target-v1.5.0-blue?style=flat-square
-[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases
+[release-badge]: https://img.shields.io/badge/release-v1.5.0-brightgreen?style=flat-square
+[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE
 [cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus

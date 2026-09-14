@@ -1,13 +1,13 @@
 {
   "version": "1.5.0",
   "engine_name": "Coco v1.5.0",
-  "status": "prepared-unreleased",
-  "release_ready": false,
+  "status": "released",
+  "release_ready": true,
   "readiness_checks": {
     "sprt_log_reviewed": true,
     "gauntlet_completed_and_reviewed": true,
     "historical_opponent_provenance_reviewed": true,
-    "release_platform_checks_passed": false
+    "release_platform_checks_passed": true
   },
   "nnue_l1_size": 512,
   "nnue_bytes": 789508,

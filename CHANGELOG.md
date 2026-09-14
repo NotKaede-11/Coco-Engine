@@ -2,19 +2,32 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
-## [Unreleased] — 1.5.0
+## [1.5.0] — 2026-09-14
 
 ### Added
 
-- Guarded capture ProbCut to verify tactical cutoffs with a reduced search.
-- Explicit principal-variation storage for search lines.
-- Root-aware time allocation that adjusts the search budget to root-move stability.
-- Weighted best-move voting across parallel search workers.
+- Guarded capture ProbCut, explicit principal-variation storage, root-aware time allocation and weighted best-move voting across parallel search workers.
+- Staged move picking, dedicated capture/quiet/evasion generation, MultiPV, ponder support and complete UCI search limits.
+- Optional BMI2/PEXT sliding attacks with a magic-bitboard fallback.
+- Native self-play data generation with deterministic seeds, exact record targets, provenance metadata and safe resume checks.
+- Classical-evaluation feature tracing and tuning tools; normal play remains NNUE-evaluated.
+- Build/network identity diagnostics and platform-specific binaries for Windows, Linux and macOS.
 
 ### Changed
 
-- Simplified GUI configuration to fifteen public UCI options while preserving support for hidden search-tuning options.
+- Replaced per-node NNUE accumulator copies with a checked incremental accumulator stack.
+- Added a clustered, cache-line-aligned transposition table with generation aging, lockless verification and improved replacement handling.
+- Embedded the existing 512-unit NNUE into release binaries while retaining compatible external-network loading.
+- Standardized builds on C++20 and simplified GUI configuration to fifteen public UCI options, with search-tuning options accepted but hidden from discovery.
 - Updated the UCI engine name to `Coco v1.5.0`.
+
+### Fixed
+
+- Board-state restoration, en-passant legality, castling, repetition/hash handling and malformed-position validation.
+- Search guards, mate-score conversion, transposition-table bounds and concurrent root-node accounting.
+- Network-safe position rebuilding after `EvalFile` reload.
+- Syzygy score-band, rule-50 policy and repeated initialization/cleanup handling.
+- UCI option declarations, command validation and lifecycle handling.
 
 ## [1.5.0-pre.1]
 
