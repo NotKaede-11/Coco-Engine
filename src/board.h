@@ -16,6 +16,8 @@ struct StateInfo {
     int halfmove_clock;
     Piece captured_piece;
     U64 hash_key;
+    uint16_t pawn_key;
+    uint16_t non_pawn_key[2];
 };
 
 struct LegalityMasks {
@@ -72,6 +74,10 @@ public:
     int get_halfmove_clock() const { return halfmove_clock; }
     U64 get_hash_key() const { return hash_key; }
     U64 recompute_hash() const { return calculate_hash(); }
+    uint16_t get_pawn_key() const { return pawn_key; }
+    uint16_t get_non_pawn_key(Color color) const { return non_pawn_key[color]; }
+    uint16_t recompute_pawn_key() const { return calculate_pawn_key(); }
+    uint16_t recompute_non_pawn_key(Color color) const { return calculate_non_pawn_key(color); }
     Piece get_piece_at(int square) const { return board_array[square]; }
     const Accumulator& get_accumulator() const { return accumulator; }
     bool is_repetition() const;
@@ -109,6 +115,10 @@ private:
 
     // Current Zobrist hash key
     U64 hash_key;
+    // Correction-history tables use at most the low 16 Zobrist bits. Keeping
+    // that exact index domain avoids bloating every history-stack entry.
+    uint16_t pawn_key;
+    uint16_t non_pawn_key[2];
 
     // Current accumulator state
     Accumulator accumulator;
@@ -119,6 +129,20 @@ private:
 
     // Helper to calculate full Zobrist hash from scratch
     U64 calculate_hash() const;
+    uint16_t calculate_pawn_key() const;
+    uint16_t calculate_non_pawn_key(Color color) const;
+
+    // Update the ordinary hash and the matching correction-history key from
+    // the same piece-square delta so the three views cannot drift apart.
+    void xor_piece_keys(Color color, PieceType piece_type, int square) {
+        const U64 key = zobrist_pieces[color][piece_type][square];
+        hash_key ^= key;
+        const uint16_t correction_delta = static_cast<uint16_t>(key);
+        if (piece_type == PAWN)
+            pawn_key ^= correction_delta;
+        else
+            non_pawn_key[color] ^= correction_delta;
+    }
 
     // True when the current EP target represents a structurally possible
     // capture for the side to move.

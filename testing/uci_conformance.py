@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import queue
 import random
 import subprocess
@@ -71,7 +72,8 @@ def main() -> int:
     try:
         session.send("uci")
         uci_lines = session.wait_for("uciok")
-        assert any(line == "id name Coco pre-release" for line in uci_lines)
+        metadata = json.loads((Path(__file__).resolve().parents[1] / 'release.json').read_text())
+        assert any(line == f"id name {metadata['engine_name']}" for line in uci_lines)
         session.send("setoption name Hash value nonsense", "setoption", "isready")
         session.wait_for("readyok")
 

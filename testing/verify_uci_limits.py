@@ -95,6 +95,17 @@ def main() -> int:
     assert long_horizon > short_horizon * 1.5, (short_horizon, long_horizon)
     print(f"PASS movestogo mtg20={short_horizon}ms mtg1={long_horizon}ms")
 
+    lines, zero_plus_increment = run(
+        engine, "go wtime 0 btime 0 winc 5000 binc 5000")
+    assert any(line.startswith("bestmove ") for line in lines)
+    assert zero_plus_increment < 250, zero_plus_increment
+    print(f"PASS 0+5 emergency move wall={zero_plus_increment}ms")
+
+    lines, tenth_no_increment = run(engine, "go wtime 100 btime 100")
+    assert any(line.startswith("bestmove ") for line in lines)
+    assert tenth_no_increment < 250, tenth_no_increment
+    print(f"PASS 0.1+0 low-clock move wall={tenth_no_increment}ms")
+
     lines, elapsed = run(engine, "go infinite", stop_after=0.15)
     assert any(line.startswith("bestmove ") for line in lines)
     assert elapsed < 1000, elapsed

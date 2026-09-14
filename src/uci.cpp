@@ -193,6 +193,11 @@ void start_search(Board &board, const Search::Limits &limits)
         Search::thread_stats[i].nodes.store(0, std::memory_order_relaxed);
         Search::thread_stats[i].tbhits.store(0, std::memory_order_relaxed);
         Search::thread_stats[i].seldepth.store(0, std::memory_order_relaxed);
+        Search::thread_stats[i].aspiration_fail_lows.store(0, std::memory_order_relaxed);
+        Search::thread_stats[i].aspiration_fail_highs.store(0, std::memory_order_relaxed);
+        Search::thread_stats[i].completed_move.store(0, std::memory_order_relaxed);
+        Search::thread_stats[i].completed_score.store(0, std::memory_order_relaxed);
+        Search::thread_stats[i].completed_depth.store(0, std::memory_order_relaxed);
     }
 
     // Preserve the accepted main-first Lazy SMP launch order.
@@ -430,6 +435,8 @@ void run_benchmark()
         Search::thread_stats[0].nodes.store(0, std::memory_order_relaxed);
         Search::thread_stats[0].tbhits.store(0, std::memory_order_relaxed);
         Search::thread_stats[0].seldepth.store(0, std::memory_order_relaxed);
+        Search::thread_stats[0].aspiration_fail_lows.store(0, std::memory_order_relaxed);
+        Search::thread_stats[0].aspiration_fail_highs.store(0, std::memory_order_relaxed);
         Search::search_position(*b, 10);
 
         // Read nodes_visited
@@ -471,7 +478,7 @@ void uci_loop()
         }
         else if (line == "uci")
         {
-            std::cout << "id name Coco pre-release\n";
+            std::cout << "id name Coco v1.5.0\n";
             std::cout << "id author NotKaede-11\n";
             std::cout << "info string build arch=" << COCO_BUILD_ARCH
                       << " isa=" << compiled_isa()
@@ -486,15 +493,9 @@ void uci_loop()
             std::cout << "option name Threads type spin default 1 min 1 max 1024\n";
             std::cout << "option name Ponder type check default false\n";
             std::cout << "option name MultiPV type spin default 1 min 1 max 256\n";
+            std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name Use PEXT type check default "
                       << (pext_available() ? "true" : "false") << "\n";
-            std::cout << "option name RFP_Margin type spin default 70 min 25 max 150\n";
-            std::cout << "option name LMR_Constant_Scaled type spin default 218 min 100 max 400\n";
-            std::cout << "option name NMP_Base type spin default 3 min 1 max 5\n";
-            std::cout << "option name NMP_Divisor type spin default 7 min 3 max 12\n";
-            std::cout << "option name Aspiration_Delta type spin default 18 min 4 max 40\n";
-            std::cout << "option name History_Threshold type spin default 15576 min 4096 max 32768\n";
-            std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name EvalFile type string default coco.nnue\n";
             std::cout << "option name SyzygyPath type string default <empty>\n";
             std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
@@ -502,9 +503,7 @@ void uci_loop()
             std::cout << "option name Syzygy50MoveRule type check default true\n";
             std::cout << "option name UCI_ShowWDL type check default false\n";
             std::cout << "option name UCI_AnalyseMode type check default false\n";
-            std::cout << "option name LMR_History_Divisor type spin default 7302 min 1024 max 32768\n";
             std::cout << "option name Contempt type spin default 0 min -100 max 100\n";
-            std::cout << "option name SEE_Pruning_Depth type spin default 0 min 0 max 20\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)

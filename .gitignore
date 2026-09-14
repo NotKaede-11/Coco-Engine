@@ -102,3 +102,24 @@ T5_AUDIT_AND_IMPLEMENTATION_ORDER.md
 # Python caches
 __pycache__/
 *.py[cod]
+
+# Local tournament books and generated release packages
+/defineBooks/
+/dist/
+/release-artifacts/
+*.log
+
+# Private working notes and machine-specific helpers
+/docs/session-notes-2026-09-14.md
+/docs/review-2026-09-14.md
+/docs/nnue-training-guidance.md
+/docs/ordo-setup.md
+/docs/evidence/path-privacy-audit-2026-09-14.md
+/docs/evidence/release-preparation-2026-09-14.md
+/.codex/
+/kaggle-sprt-v2/
+/run_gauntlet.bat
+/scripts/calculate_elo.py
+/scripts/gauntlet_status.py
+/scripts/run_gauntlet.py
+/testing/profile_corrhist_lifetime.py

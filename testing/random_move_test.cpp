@@ -128,6 +128,9 @@ int main(int argc, char** argv) {
         while (plies < 250 && !game_over) {
             std::string fen_before = board->get_fen();
             U64 hash_before = board->get_hash_key();
+            U64 pawn_key_before = board->get_pawn_key();
+            U64 white_non_pawn_key_before = board->get_non_pawn_key(WHITE);
+            U64 black_non_pawn_key_before = board->get_non_pawn_key(BLACK);
             Accumulator acc_before = board->get_accumulator();
 
             // Generate pseudo-legal moves
@@ -193,6 +196,14 @@ int main(int argc, char** argv) {
                 std::cerr << "  FEN after: " << board->get_fen() << std::endl;
                 return 1;
             }
+            if (board->get_pawn_key() != board->recompute_pawn_key()
+                || board->get_non_pawn_key(WHITE) != board->recompute_non_pawn_key(WHITE)
+                || board->get_non_pawn_key(BLACK) != board->recompute_non_pawn_key(BLACK)) {
+                std::cerr << "CRITICAL ERROR: Correction-key mismatch!" << std::endl;
+                std::cerr << "  Game: " << g << ", Ply: " << plies << std::endl;
+                std::cerr << "  Move: " << test_move_to_str(chosen_move) << std::endl;
+                return 1;
+            }
 
             // Unmake the move to check reversibility
             board->unmake_move(chosen_move);
@@ -212,6 +223,12 @@ int main(int argc, char** argv) {
                 std::cerr << "CRITICAL ERROR: Zobrist hash mismatch after unmake_move!" << std::endl;
                 std::cerr << "  Before: " << hash_before << std::endl;
                 std::cerr << "  After:  " << hash_after_unmake << std::endl;
+                return 1;
+            }
+            if (pawn_key_before != board->get_pawn_key()
+                || white_non_pawn_key_before != board->get_non_pawn_key(WHITE)
+                || black_non_pawn_key_before != board->get_non_pawn_key(BLACK)) {
+                std::cerr << "CRITICAL ERROR: Correction keys not restored after unmake_move!" << std::endl;
                 return 1;
             }
             if (!accumulators_equal(acc_before, acc_after_unmake)) {

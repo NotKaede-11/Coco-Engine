@@ -1,0 +1,485 @@
+{
+  "captured_utc": "2026-09-14T14:22:12.772009+00:00",
+  "games": 5000,
+  "config_results_match": true,
+  "colour_pairs": 2500,
+  "distinct_opponent_fens": 250,
+  "results": {
+    "Coco-1.4.0": {
+      "W": 500
+    },
+    "Surveyor-ONE.1": {
+      "W": 292,
+      "L": 138,
+      "D": 70
+    },
+    "Lynx-1.5.0": {
+      "W": 318,
+      "D": 62,
+      "L": 120
+    },
+    "Cepimetheus-16": {
+      "W": 362,
+      "L": 92,
+      "D": 46
+    },
+    "Sable-1.1.0": {
+      "W": 271,
+      "L": 148,
+      "D": 81
+    },
+    "Dual-0.4.1": {
+      "D": 103,
+      "W": 178,
+      "L": 219
+    },
+    "Stash-25.0": {
+      "L": 192,
+      "D": 93,
+      "W": 215
+    },
+    "Crustik-0.3.0": {
+      "L": 336,
+      "W": 61,
+      "D": 103
+    },
+    "Noggin-2.1": {
+      "L": 282,
+      "W": 121,
+      "D": 97
+    },
+    "Potential-3.0.0": {
+      "W": 185,
+      "D": 94,
+      "L": 221
+    }
+  },
+  "pair_bins_LL_LD_mid_WD_WW": {
+    "Coco-1.4.0": [
+      0,
+      0,
+      0,
+      0,
+      250
+    ],
+    "Surveyor-ONE.1": [
+      16,
+      23,
+      87,
+      39,
+      85
+    ],
+    "Lynx-1.5.0": [
+      19,
+      11,
+      72,
+      49,
+      99
+    ],
+    "Cepimetheus-16": [
+      8,
+      14,
+      64,
+      28,
+      136
+    ],
+    "Sable-1.1.0": [
+      23,
+      29,
+      78,
+      42,
+      78
+    ],
+    "Dual-0.4.1": [
+      54,
+      39,
+      87,
+      34,
+      36
+    ],
+    "Stash-25.0": [
+      38,
+      37,
+      87,
+      40,
+      48
+    ],
+    "Crustik-0.3.0": [
+      108,
+      74,
+      55,
+      11,
+      2
+    ],
+    "Noggin-2.1": [
+      79,
+      54,
+      79,
+      25,
+      13
+    ],
+    "Potential-3.0.0": [
+      47,
+      37,
+      100,
+      37,
+      29
+    ]
+  },
+  "terminations": {
+    "normal": 4967,
+    "time forfeit": 32,
+    "abandoned": 1
+  },
+  "source_files": {
+    "gauntlet_config.json": "d1268ce908bccabd40326ee9bcfb7cf4cec92457286ee4ceb4e1c244f1fc4f14",
+    "gauntlet_games.pgn": "ebdf79e8661bf96e3396444d5e451fe18d84106cf13cb01fe709865968280854",
+    "fastchess_gauntlet.log": "d7dace6c18760a50bc53c3d0f1afe2cc8dc6a24e3220efaba1fb8d3d108eebe2"
+  },
+  "runner_sha256": "f3aaab5109faf85a4dcfbe1b23bf2e97d6cafe43f8e9be8bad28511f07fe4f0c",
+  "engine_identities": [
+    {
+      "name": "Coco-1.5.0-Dev",
+      "bytes": 5493112,
+      "sha256": "2567ff9222bf84026ec844bde424d99795877125880fb51b5829d942f36d9b83",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Cepimetheus-16",
+      "bytes": 573609,
+      "sha256": "1784133e3ebdf14e114a1e6450c9730ee0bc8c2f2b637b93e6ba4a67a83b3cd8",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Coco-1.4.0",
+      "bytes": 4243362,
+      "sha256": "af849c4df119c1521b54b8b7bdb25ca3672671d602a9b2b27230796fb8afa068",
+      "external_coco_nnue": {
+        "bytes": 394756,
+        "sha256": "e939164e853bff4e212eb4cf684a720750d8686863db211fcd82b50287de2ae4"
+      }
+    },
+    {
+      "name": "Lynx-1.5.0",
+      "bytes": 13265165,
+      "sha256": "8b0c65daf8b5be92c4180ce3a0e2e29036818d2c1091249a0214b2c8aee3d8f6"
+    },
+    {
+      "name": "Surveyor-ONE.1",
+      "bytes": 564224,
+      "sha256": "cd2557a00e0aee3f6f1a7519c06298832c7e5f4b908c39361bd5c8f6ae35c59c",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Sable-1.1.0",
+      "bytes": 7906304,
+      "sha256": "a9fcdb4d891dd9d0aaab79c4f15d879656776e03e0983f229cac40dba8f62c63",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Stash-25.0",
+      "bytes": 637318,
+      "sha256": "6c77c620a7a6d9dd39562d1158b4f2fe0c65758e004b95289ccd78eed2791780",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Dual-0.4.1",
+      "bytes": 3057711,
+      "sha256": "eee410da2c01d784d56d4f439d98f538060e3415e5d21758f75e32bf7af373a4",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Crustik-0.3.0",
+      "bytes": 1449747,
+      "sha256": "6ee45450212cf347a7f8f077269d06bc09538e5af756f31009b8faaef28d7a88",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Potential-3.0.0",
+      "bytes": 271652,
+      "sha256": "49ffd09807a5be78e8a6f16282e2468a4f58ead085f85ddd465803c51fe0a40d",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    },
+    {
+      "name": "Noggin-2.1",
+      "bytes": 1475072,
+      "sha256": "3912a2d83cf138006ddf0d1a8c41aca5f4f9bbce2ab071c2ddcde059ccf7bd6a",
+      "external_coco_nnue": {
+        "bytes": 789508,
+        "sha256": "392be46c8e06c6d0cb6bedf00d8e3d08950d11daa883362de98f0c1deee68055"
+      }
+    }
+  ],
+  "opening_sha256": "4d836bffa2bf698bd8f38584ed865288f7a27e3c28cbe7767d1d45a8af7564ae",
+  "warning_counts": {
+    "PV continues after threefold repetition | Coco-1.5.0-Dev": 3547,
+    "Bestmove does not match beginning of last PV | Potential-3.0.0": 172,
+    "PV continues after threefold repetition | Coco-1.4.0": 492,
+    "PV continues after fifty-move rule | Potential-3.0.0": 277,
+    "PV continues after threefold repetition | Crustik-0.3.0": 1755,
+    "PV continues after fifty-move rule | Coco-1.5.0-Dev": 828,
+    "PV continues after threefold repetition | Dual-0.4.1": 15,
+    "Bestmove does not match beginning of last PV | Stash-25.0": 32,
+    "PV continues after threefold repetition | Lynx-1.5.0": 38,
+    "PV continues after threefold repetition | Noggin-2.1": 14,
+    "Engine Lynx-1.5.0 is not responsive": 1
+  },
+  "ordo": {
+    "three-anchors": [
+      [
+        "5",
+        "Coco-1.5.0-Dev",
+        "2978.6",
+        "16.6",
+        "2377.50",
+        "4500",
+        "52.83"
+      ]
+    ],
+    "normal-pairs": [
+      [
+        "5",
+        "Coco-1.5.0-Dev",
+        "2977.0",
+        "-",
+        "2343.00",
+        "4442",
+        "52.75"
+      ]
+    ],
+    "anchor-Lynx-1.5.0": [
+      [
+        "5",
+        "Coco-1.5.0-Dev",
+        "2965.8",
+        "-",
+        "2377.50",
+        "4500",
+        "52.83"
+      ]
+    ],
+    "anchor-Sable-1.1.0": [
+      [
+        "5",
+        "Coco-1.5.0-Dev",
+        "3021.0",
+        "-",
+        "2377.50",
+        "4500",
+        "52.83"
+      ]
+    ],
+    "anchor-Stash-25.0": [
+      [
+        "5",
+        "Coco-1.5.0-Dev",
+        "2948.1",
+        "-",
+        "2377.50",
+        "4500",
+        "52.83"
+      ]
+    ],
+    "notes": "Fixed-anchor conditional estimate. Native errors do not include calibration uncertainty or opening-pair dependence. See docs/evidence/gauntlet-rating-method.md."
+  },
+  "opening_bootstrap": {
+    "samples": 1000,
+    "seed": 20260914,
+    "resampling_unit": "opponent + initial FEN; every repeated colour pair retained",
+    "clusters_per_opponent": {
+      "Surveyor-ONE.1": 25,
+      "Lynx-1.5.0": 25,
+      "Cepimetheus-16": 25,
+      "Sable-1.1.0": 25,
+      "Dual-0.4.1": 25,
+      "Stash-25.0": 25,
+      "Crustik-0.3.0": 25,
+      "Noggin-2.1": 25,
+      "Potential-3.0.0": 25
+    },
+    "games_per_cluster": {
+      "Surveyor-ONE.1": [
+        20
+      ],
+      "Lynx-1.5.0": [
+        20
+      ],
+      "Cepimetheus-16": [
+        20
+      ],
+      "Sable-1.1.0": [
+        20
+      ],
+      "Dual-0.4.1": [
+        20
+      ],
+      "Stash-25.0": [
+        20
+      ],
+      "Crustik-0.3.0": [
+        20
+      ],
+      "Noggin-2.1": [
+        20
+      ],
+      "Potential-3.0.0": [
+        20
+      ]
+    },
+    "mean": 2978.68226,
+    "sd": 9.243966075294795,
+    "percentile_95": [
+      2960.79725,
+      2996.76225
+    ],
+    "limitation": "Conditional on fixed anchors and sampled opening population; does not cover time-control transfer or systematic run defects."
+  },
+  "release_estimate": {
+    "rating": 2977.0,
+    "games": 4442,
+    "counts": {
+      "W": 1971,
+      "L": 1727,
+      "D": 744
+    },
+    "score_percent": 52.746510580819454,
+    "selection": "normal opening pairs; historical opponent excluded",
+    "per_opponent": {
+      "Surveyor-ONE.1": {
+        "W": 291,
+        "L": 135,
+        "D": 70
+      },
+      "Lynx-1.5.0": {
+        "W": 303,
+        "D": 59,
+        "L": 118
+      },
+      "Cepimetheus-16": {
+        "W": 362,
+        "L": 92,
+        "D": 46
+      },
+      "Sable-1.1.0": {
+        "W": 270,
+        "L": 148,
+        "D": 80
+      },
+      "Dual-0.4.1": {
+        "D": 102,
+        "W": 177,
+        "L": 215
+      },
+      "Stash-25.0": {
+        "L": 189,
+        "D": 93,
+        "W": 210
+      },
+      "Crustik-0.3.0": {
+        "L": 335,
+        "W": 60,
+        "D": 103
+      },
+      "Noggin-2.1": {
+        "L": 279,
+        "W": 116,
+        "D": 97
+      },
+      "Potential-3.0.0": {
+        "W": 182,
+        "D": 94,
+        "L": 216
+      }
+    },
+    "bootstrap": {
+      "samples": 1000,
+      "seed": 20260914,
+      "resampling_unit": "opponent + initial FEN; every repeated colour pair retained",
+      "normal_pairs_only": true,
+      "input_games": 4442,
+      "clusters_per_opponent": {
+        "Surveyor-ONE.1": 25,
+        "Lynx-1.5.0": 25,
+        "Cepimetheus-16": 25,
+        "Sable-1.1.0": 25,
+        "Dual-0.4.1": 25,
+        "Stash-25.0": 25,
+        "Crustik-0.3.0": 25,
+        "Noggin-2.1": 25,
+        "Potential-3.0.0": 25
+      },
+      "games_per_cluster": {
+        "Surveyor-ONE.1": [
+          18,
+          20
+        ],
+        "Lynx-1.5.0": [
+          16,
+          18,
+          20
+        ],
+        "Cepimetheus-16": [
+          20
+        ],
+        "Sable-1.1.0": [
+          18,
+          20
+        ],
+        "Dual-0.4.1": [
+          16,
+          18,
+          20
+        ],
+        "Stash-25.0": [
+          16,
+          18,
+          20
+        ],
+        "Crustik-0.3.0": [
+          18,
+          20
+        ],
+        "Noggin-2.1": [
+          16,
+          18,
+          20
+        ],
+        "Potential-3.0.0": [
+          18,
+          20
+        ]
+      },
+      "mean": 2977.10423,
+      "sd": 9.358251143860777,
+      "percentile_95": [
+        2959.30925,
+        2995.26125
+      ],
+      "limitation": "Conditional on fixed anchors and sampled opening population; does not cover time-control transfer or systematic run defects."
+    }
+  }
+}

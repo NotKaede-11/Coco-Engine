@@ -119,7 +119,7 @@ int main() {
         require(board.get_hash_key() == oracle.get_hash_key(), "mate search must restore board");
 
         Move pv[32]{};
-        const int pv_length = Search::test_get_pv(board, pv, 32);
+        const int pv_length = Search::test_get_completed_explicit_pv(board, pv, 32);
         const int mate_plies = MATE - std::abs(expected);
         require(pv_length >= mate_plies,
                 "mate PV is truncated for " + fen + ": expected at least "

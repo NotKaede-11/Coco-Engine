@@ -7,7 +7,7 @@
 
   **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
 
-  [![Pre-release][release-badge]][release-link]
+  [![Release target: v1.5.0][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
@@ -22,9 +22,17 @@ Coco is a cross-platform chess engine written in C++20. Its search combines bitb
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
 
+## Release status
+
+Version **1.5.0 is being prepared and has not been published**. It adds guarded capture ProbCut, explicit principal variations, root-aware time allocation and parallel best-move voting to the earlier pre-release while retaining the current NNUE and original search defaults. The retained SPRT console log records a 1,092-game SPRT pass against the pre-release at `10+0.1`, Threads=1 and Hash=16.
+
+**Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations. Hosted platform checks remain pending.
+
+See the [proposed release notes](docs/releases/v1.5.0.md) and [release checklist](docs/RELEASING.md).
+
 ## Quick start
 
-1. Download the pre-release binary for your platform from the [releases page][release-link].
+1. Download a published binary for your platform from the [releases page][release-link].
 2. Choose the binary that best matches your CPU using the table below.
 3. Add the executable as a UCI engine in your chess GUI.
 
@@ -35,8 +43,9 @@ uci
 isready
 position startpos
 go movetime 1000
-quit
 ```
+
+Wait for `bestmove`, then enter `quit`.
 
 ## Choose the right binary
 
@@ -58,21 +67,21 @@ Using instructions unsupported by your CPU will prevent the engine from starting
   <tr>
     <td width="50%" valign="top">
       <strong>Board and move generation</strong><br><br>
-      64-bit bitboards, Zobrist hashing, checked make/unmake state, magic sliding attacks, and an optional BMI2/PEXT backend. Dedicated capture, quiet, and evasion generation feeds a staged MovePicker.
+      64-bit bitboards, Zobrist hashing, checked make/unmake state, compact incremental position fingerprints, magic sliding attacks, and an optional BMI2/PEXT backend. Dedicated capture, quiet, and evasion generation feeds a staged MovePicker.
     </td>
     <td width="50%" valign="top">
       <strong>Search</strong><br><br>
-      Iterative deepening, aspiration windows, PVS, quiescence search, transposition-table cutoffs, null-move pruning, reverse futility pruning, razoring, late-move reductions, histories, and guarded extensions.
+      Iterative deepening, aspiration windows, PVS, quiescence search, transposition-table cutoffs, null-move pruning, reverse futility pruning, razoring, late-move reductions, histories, guarded capture ProbCut, explicit principal variations, root-aware time allocation, and guarded extensions.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <strong>Neural evaluation</strong><br><br>
-      A quantized 768-input, 512-hidden-unit NNUE is embedded into release binaries. Incremental accumulators update only the features changed by each move.
+      A quantized Chess768 NNUE with 512 hidden units per perspective is embedded into release binaries. Both perspectives feed the output layer. Incremental accumulators update only the features changed by each move.
     </td>
     <td width="50%" valign="top">
       <strong>Parallel search</strong><br><br>
-      Lazy SMP workers share a lockless transposition table while retaining independent search state and truthful per-thread node accounting.
+      Lazy SMP workers share a lockless transposition table while retaining independent search state and per-thread node accounting and best-move voting when multiple workers are active.
     </td>
   </tr>
   <tr>
@@ -95,23 +104,29 @@ Development matches may give both engines the same external opening suite. This 
 
 ## UCI configuration
 
-The most useful options exposed to chess GUIs are:
+The release build identifies as `Coco v1.5.0` and exposes these fifteen options to chess GUIs:
 
 | Option | Default | Purpose |
 |:--|--:|:--|
 | `Hash` | 16 MiB | Transposition-table memory |
+| `Clear Hash` | button | Clear the transposition table |
 | `Threads` | 1 | Parallel search workers |
 | `Ponder` | false | Think during the opponent's turn |
 | `MultiPV` | 1 | Number of principal variations to report |
 | `Move Overhead` | 30 ms | Safety allowance for GUI and operating-system latency |
-| `Use PEXT` | true | Use the BMI2 sliding-attack backend when supported |
+| `Use PEXT` | hardware dependent | Use the BMI2 sliding-attack backend when supported |
 | `EvalFile` | `coco.nnue` | Load a compatible external network |
 | `SyzygyPath` | empty | Path to Syzygy tablebase files |
+| `SyzygyProbeDepth` | 1 | Depth threshold for probing positions at the largest loaded tablebase size |
+| `SyzygyProbeLimit` | true | Apply that depth threshold at the largest loaded tablebase size |
 | `Syzygy50MoveRule` | true | Respect the 50-move rule in root tablebase decisions |
 | `UCI_ShowWDL` | false | Include win/draw/loss permille estimates in analysis output |
 | `UCI_AnalyseMode` | false | Accept the standard GUI analysis-mode signal |
+| `Contempt` | 0 | Optional draw-preference setting; neutral by default |
 
-`Clear Hash`, `SyzygyProbeDepth`, `SyzygyProbeLimit`, `Contempt`, and advanced search-tuning options are also available. The shipped defaults are the tested playing configuration.
+Eight internal search options remain accepted through `setoption`, but are hidden from GUI discovery: `RFP_Margin`, `LMR_Constant_Scaled`, `NMP_Base`, `NMP_Divisor`, `Aspiration_Delta`, `History_Threshold`, `LMR_History_Divisor`, and `SEE_Pruning_Depth`.
+
+The network is 789,508 bytes with SHA-256 `392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055`. A compatible external `coco.nnue` may override the embedded net. Use the `info string build` diagnostic to verify the active network when comparing results.
 
 ## Build from source
 
@@ -162,19 +177,8 @@ The arguments are target positions, worker threads, and output path. Additional 
 
 </details>
 
-<details>
-<summary><strong>Search-parameter tuning</strong></summary>
+Search tuning requires a runner configured for the hidden internal parameters and a frozen engine/network baseline. Keep tuning probes separate from an independent candidate-versus-baseline test.
 
-```bash
-python scripts/spsa_tune_30k.py --dry-run
-python scripts/spsa_tune_30k.py --concurrency 8
-python scripts/spsa_tune_100k.py --concurrency 8 --tc 20+0.2
-python scripts/spsa_tune_100k.py --resume
-```
-
-The tuning tools verify the engine's advertised UCI parameters before starting. HCE weights use the dedicated production-feature tuner; SPSA is reserved for numerical search parameters.
-
-</details>
 
 ## Project
 
@@ -188,7 +192,7 @@ Bug reports, test games, code review, and constructive feedback are welcome thro
 
 Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
 
-[release-badge]: https://img.shields.io/github/v/release/NotKaede-11/Coco-Engine?display_name=tag&include_prereleases&sort=semver&style=flat-square&label=pre-release
+[release-badge]: https://img.shields.io/badge/target-v1.5.0-blue?style=flat-square
 [release-link]: https://github.com/NotKaede-11/Coco-Engine/releases
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE

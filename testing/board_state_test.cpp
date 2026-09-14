@@ -34,6 +34,12 @@ bool occupancies_match(const Board& board) {
            board.get_occupancy(BOTH) == (expected[WHITE] | expected[BLACK]);
 }
 
+bool correction_keys_match(const Board& board) {
+    return board.get_pawn_key() == board.recompute_pawn_key()
+        && board.get_non_pawn_key(WHITE) == board.recompute_non_pawn_key(WHITE)
+        && board.get_non_pawn_key(BLACK) == board.recompute_non_pawn_key(BLACK);
+}
+
 Move find_move(const Board& board, int from, int to, int flag) {
     MoveList moves;
     generate_pseudo_legal_moves(board, moves);
@@ -45,11 +51,15 @@ Move find_move(const Board& board, int from, int to, int flag) {
 }
 
 bool verify_fast_legality(Board& board, const std::string& label) {
-    if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board))
+    if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board)
+        || !correction_keys_match(board))
         return fail(label + ": FEN hash mismatch");
 
     const std::string root_fen = board.get_fen();
     const U64 root_hash = board.get_hash_key();
+    const U64 root_pawn_key = board.get_pawn_key();
+    const U64 root_white_non_pawn_key = board.get_non_pawn_key(WHITE);
+    const U64 root_black_non_pawn_key = board.get_non_pawn_key(BLACK);
     const Accumulator root_acc = board.get_accumulator();
     const LegalityMasks masks = board.get_legality_masks();
     MoveList moves;
@@ -64,7 +74,8 @@ bool verify_fast_legality(Board& board, const std::string& label) {
                         square_to_str(move.from()) + square_to_str(move.to()));
 
         if (slow) {
-            if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board))
+            if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board)
+                || !correction_keys_match(board))
                 return fail(label + ": incremental hash mismatch after move");
             Accumulator rebuilt;
             g_nnue.init_accumulator(board, rebuilt);
@@ -74,16 +85,23 @@ bool verify_fast_legality(Board& board, const std::string& label) {
         }
 
         if (board.get_fen() != root_fen || board.get_hash_key() != root_hash ||
+            board.get_pawn_key() != root_pawn_key ||
+            board.get_non_pawn_key(WHITE) != root_white_non_pawn_key ||
+            board.get_non_pawn_key(BLACK) != root_black_non_pawn_key ||
             !occupancies_match(board) ||
             !accumulators_equal(board.get_accumulator(), root_acc))
             return fail(label + ": state mismatch after make/unmake");
     }
 
     board.make_null_move();
-    if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board))
+    if (board.get_hash_key() != board.recompute_hash() || !occupancies_match(board)
+        || !correction_keys_match(board))
         return fail(label + ": null-move hash mismatch");
     board.unmake_null_move();
     if (board.get_fen() != root_fen || board.get_hash_key() != root_hash ||
+        board.get_pawn_key() != root_pawn_key ||
+        board.get_non_pawn_key(WHITE) != root_white_non_pawn_key ||
+        board.get_non_pawn_key(BLACK) != root_black_non_pawn_key ||
         !accumulators_equal(board.get_accumulator(), root_acc))
         return fail(label + ": state mismatch after null move");
     return true;
@@ -92,6 +110,9 @@ bool verify_fast_legality(Board& board, const std::string& label) {
 bool verify_history_bounds(Board& board) {
     const std::string root_fen = board.get_fen();
     const U64 root_hash = board.get_hash_key();
+    const U64 root_pawn_key = board.get_pawn_key();
+    const U64 root_white_non_pawn_key = board.get_non_pawn_key(WHITE);
+    const U64 root_black_non_pawn_key = board.get_non_pawn_key(BLACK);
     const Accumulator root_acc = board.get_accumulator();
 
     for (int ply = 0; ply < Board::HISTORY_CAPACITY; ++ply)
@@ -103,6 +124,9 @@ bool verify_history_bounds(Board& board) {
         board.unmake_null_move();
 
     if (board.get_fen() != root_fen || board.get_hash_key() != root_hash ||
+        board.get_pawn_key() != root_pawn_key ||
+        board.get_non_pawn_key(WHITE) != root_white_non_pawn_key ||
+        board.get_non_pawn_key(BLACK) != root_black_non_pawn_key ||
         !accumulators_equal(board.get_accumulator(), root_acc))
         return fail("state mismatch after history-capacity test");
     return true;
@@ -238,7 +262,7 @@ int main() {
     if (!verify_batched_accumulator_updates(*board))
         return 1;
 
-    std::cout << "PASS: EP legality, make/unmake, null move, hash, and all "
+    std::cout << "PASS: EP legality, make/unmake, null move, full/correction hashes, and all "
               << L1_SIZE << " accumulator lanes; sizeof(Board)="
               << sizeof(Board) << " bytes\n";
     return 0;

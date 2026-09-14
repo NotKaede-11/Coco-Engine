@@ -24,11 +24,17 @@ def main():
     project_root = Path(__file__).resolve().parents[1]
     coco_path = Path(os.environ.get("COCO_ENGINE", project_root / "coco-chess.exe"))
     reference_root = Path(os.environ.get("COCO_REFERENCES", project_root.parent / "coco_references"))
+    use_pext = os.environ.get("COCO_USE_PEXT", "true").strip().lower() not in {"0", "false", "no"}
+    suite_filter = os.environ.get("COCO_PERFT_SUITES", "all").strip().lower()
 
     epd_files = [
         ("Custom Debugging Suite", project_root / "testing" / "custom_perft_suite.epd"),
         ("Ethereal Standard Suite", reference_root / "Ethereal" / "src" / "perft" / "standard.epd")
     ]
+    if suite_filter == "custom":
+        epd_files = epd_files[:1]
+    elif suite_filter == "ethereal":
+        epd_files = epd_files[1:]
 
     if not coco_path.exists():
         print(f"Error: Coco executable not found at {coco_path}")
@@ -71,7 +77,11 @@ def main():
                     continue
 
                 # Run Coco
-                coco_input = f"position fen {fen}\ngo perft {depth}\nquit\n"
+                pext_value = "true" if use_pext else "false"
+                coco_input = (
+                    f"setoption name Use PEXT value {pext_value}\n"
+                    f"position fen {fen}\ngo perft {depth}\nquit\n"
+                )
                 r = subprocess.run([str(coco_path)], input=coco_input, capture_output=True, text=True)
                 coco_nodes = parse_coco_perft(r.stdout)
 

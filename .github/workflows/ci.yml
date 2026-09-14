@@ -5,6 +5,7 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -23,6 +24,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate release metadata and packaging guards
+        run: |
+          python scripts/check_release.py
+          python testing/release_pipeline_test.py
+          python testing/public_paths_test.py
+          python scripts/check_public_paths.py
       - name: Build portable x86-64 engine
         run: make build ARCH=x86-64-popcnt COMP=${{ matrix.comp }}
       - name: Verify network identity
@@ -32,13 +39,15 @@ jobs:
       - name: Verify runtime build identity
         run: python testing/verify_build_identity.py ./coco-chess --arch x86-64-popcnt
       - name: Verify deterministic search signature
-        run: python testing/verify_fixed_signature.py ./coco-chess --nodes 731322
+        run: python testing/verify_fixed_signature.py ./coco-chess
       - name: Verify UCI options
         run: python testing/validate_options.py ./coco-chess
       - name: Verify UCI search limits
         run: python testing/verify_uci_limits.py ./coco-chess
       - name: Verify UCI lifecycle and malformed-input handling
         run: python testing/uci_conformance.py ./coco-chess
+      - name: Verify multi-thread lifecycle
+        run: python testing/verify_smp_lifecycle.py ./coco-chess
       - name: Verify perft through depth 3
         env:
           COCO_ENGINE: ${{ github.workspace }}/coco-chess
@@ -100,5 +109,8 @@ jobs:
         shell: pwsh
         run: |
           python testing/verify_build_identity.py .\coco-chess.exe --arch native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python testing/validate_options.py .\coco-chess.exe
-          python testing/verify_fixed_signature.py .\coco-chess.exe --nodes 731322
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python testing/verify_fixed_signature.py .\coco-chess.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

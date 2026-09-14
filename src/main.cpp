@@ -5,11 +5,43 @@
 #include "search.h"
 #include <cstdio>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "datagen.h"
 #include <iostream>
 #include <vector>
 #include <stdexcept>
 #include <filesystem>
+
+namespace {
+
+bool is_interactive_terminal() {
+#if defined(_WIN32)
+    return _isatty(_fileno(stdin)) != 0 && _isatty(_fileno(stdout)) != 0;
+#else
+    return isatty(fileno(stdin)) != 0 && isatty(fileno(stdout)) != 0;
+#endif
+}
+
+void print_startup_wordmark() {
+    if (!is_interactive_terminal())
+        return;
+
+    std::cout
+        << "  _____\n"
+        << " /  __ \\\n"
+        << " | /  \\/ ___   ___ ___\n"
+        << " | |    / _ \\ / __/ _ \\\n"
+        << " | \\__/\\ (_) | (_| (_) |\n"
+        << "  \\____/\\___/ \\___\\___/\n"
+        << "\n";
+}
+
+} // namespace
 
 int main(int argc, char* argv[]) {
     // Disable I/O buffering for UCI pipe compatibility on Windows.
@@ -31,6 +63,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Please ensure 'coco.nnue' is located in the working directory or next to the executable." << std::endl;
         return 1;
     }
+
+    // Keep UCI stdout pristine for GUIs and match runners, while showing the
+    // Coco wordmark when a person launches the engine directly in a terminal.
+    print_startup_wordmark();
     
     // Parse arguments safely
     std::vector<std::string> args(argv, argv + argc);

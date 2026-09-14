@@ -2,7 +2,21 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
-## [Pre-release]
+## [Unreleased] — 1.5.0
+
+### Added
+
+- Guarded capture ProbCut to verify tactical cutoffs with a reduced search.
+- Explicit principal-variation storage for search lines.
+- Root-aware time allocation that adjusts the search budget to root-move stability.
+- Weighted best-move voting across parallel search workers.
+
+### Changed
+
+- Simplified GUI configuration to fifteen public UCI options while preserving support for hidden search-tuning options.
+- Updated the UCI engine name to `Coco v1.5.0`.
+
+## [1.5.0-pre.1]
 
 This development pre-release rebuilds Coco's correctness foundation and expands its search, move generation, evaluation tooling, datagen, protocol support, and release validation. It is published for early testing and feedback before the next stable release.
 
@@ -20,7 +34,7 @@ This development pre-release rebuilds Coco's correctness foundation and expands 
 ### Changed
 
 - **Compiler Compatibility:** Standardized release, local, and test builds on C++20, matching Coco's actual language-feature requirements, and selected MinGW's POSIX thread model for portable `std::thread` support.
-- **Board and NNUE State:** Replaced per-node accumulator copies with a checked accumulator stack, incremental occupancy updates, and network-safe position rebuilds after `EvalFile` reload.
+- **Board and NNUE State:** Replaced per-node accumulator copies with a checked accumulator stack, incremental occupancy updates, network-safe position rebuilds after `EvalFile` reload, and compact incremental pawn/non-pawn fingerprints for future online search correction without changing the network format.
 - **Transposition Table:** Added clustered cache-line storage, generation aging, power-of-two indexing, lockless verification, correct fail-soft bounds, move retention on shallow hits, mate-score conversion, and clear/hashfull support.
 - **Evaluation Network Packaging:** The production NNUE is embedded in release binaries; `EvalFile` remains available for deliberate runtime replacement.
 

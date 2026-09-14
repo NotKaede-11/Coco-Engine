@@ -9,6 +9,12 @@ import json
 import subprocess
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def release_config() -> dict:
+    return json.loads((ROOT / "release.json").read_text(encoding="utf-8"))
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -60,19 +66,37 @@ def create_artifact(args: argparse.Namespace) -> int:
 
 def assemble(args: argparse.Namespace) -> int:
     dist = args.dist.resolve()
+    config = release_config()
+    if args.tag != "v" + config["version"]:
+        raise RuntimeError("release tag does not match release.json")
     records = []
     for path in sorted(dist.glob("*.metadata.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
+        if record["artifact"] not in config["artifacts"]:
+            raise RuntimeError(f"unexpected artifact: {record['artifact']}")
         artifact = dist / record["artifact"]
         if not artifact.is_file():
             raise RuntimeError(f"metadata has no artifact: {record['artifact']}")
         if sha256(artifact) != record["artifact_sha256"]:
             raise RuntimeError(f"artifact hash mismatch: {artifact.name}")
+        if artifact.stat().st_size != record["artifact_bytes"]:
+            raise RuntimeError(f"artifact size mismatch: {artifact.name}")
         if record["source_commit"] != args.source_commit:
             raise RuntimeError(f"source mismatch in {path.name}")
+        if (record["nnue_sha256"] != config["nnue_sha256"]
+                or record["nnue_bytes"] != config["nnue_bytes"]
+                or record["fixed_signature_nodes"] != config["fixed_signature_nodes"]):
+            raise RuntimeError(f"release network/signature mismatch in {path.name}")
+        if type(record["fixed_signature_verified"]) is not bool:
+            raise RuntimeError(f"invalid runtime verification flag in {path.name}")
+        if record["fixed_signature_verified"] and not record["runtime_identity"]:
+            raise RuntimeError(f"verified artifact has no runtime identity: {path.name}")
         records.append(record)
     if not records:
         raise RuntimeError(f"no artifact metadata found in {dist}")
+    names = [record["artifact"] for record in records]
+    if len(set(names)) != len(names) or set(names) != set(config["artifacts"]):
+        raise RuntimeError("incomplete or duplicate release artifacts")
     network_hashes = {record["nnue_sha256"] for record in records}
     signatures = {record["fixed_signature_nodes"] for record in records}
     if len(network_hashes) != 1 or len(signatures) != 1:
@@ -99,7 +123,8 @@ def main() -> int:
     artifact.add_argument("--compiler", required=True)
     artifact.add_argument("--source-commit", required=True)
     artifact.add_argument("--network", type=Path, required=True)
-    artifact.add_argument("--fixed-signature", type=int, required=True)
+    artifact.add_argument("--fixed-signature", type=int,
+                          default=release_config()["fixed_signature_nodes"])
     artifact.add_argument("--fixed-signature-verified", choices=("true", "false"), required=True)
     artifact.add_argument("--runtime-engine", action="store_true")
     artifact.add_argument("--output", type=Path, required=True)

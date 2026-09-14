@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -12,7 +13,8 @@ from pathlib import Path
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("engine", type=Path)
-    parser.add_argument("--nodes", type=int, default=731322)
+    metadata = json.loads((Path(__file__).resolve().parents[1] / "release.json").read_text())
+    parser.add_argument("--nodes", type=int, default=metadata["fixed_signature_nodes"])
     args = parser.parse_args()
     engine = args.engine.resolve()
     result = subprocess.run(

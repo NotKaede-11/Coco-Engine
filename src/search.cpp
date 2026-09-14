@@ -13,6 +13,7 @@
 const int VALUE_TB = 28000;
 #include <chrono>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -46,7 +47,7 @@ struct RootNodeStat {
 };
 
 RootNodeStat root_node_stats[256];
-uint64_t root_node_counts[MAX_THREADS][256]{};
+std::atomic<uint64_t> root_node_counts[MAX_THREADS][256]{};
 int root_node_stat_count = 0;
 Move root_allowed_moves[256];
 int root_allowed_count = 0;
@@ -56,7 +57,8 @@ inline void record_root_nodes(Move move, uint64_t nodes) {
     if (!root_accounting_enabled) return;
     for (int i = 0; i < root_node_stat_count; ++i) {
         if (root_node_stats[i].move == move) {
-            root_node_counts[active_thread_id][i] += nodes;
+            root_node_counts[active_thread_id][i].fetch_add(
+                nodes, std::memory_order_relaxed);
             return;
         }
     }
@@ -65,13 +67,36 @@ inline void record_root_nodes(Move move, uint64_t nodes) {
 inline uint64_t root_nodes_for_move(Move move) {
     for (int i = 0; i < root_node_stat_count; ++i) {
         if (root_node_stats[i].move == move)
-            return root_node_counts[0][i];
+            return root_node_counts[0][i].load(std::memory_order_relaxed);
     }
     return 0;
+}
+
+inline uint64_t root_nodes_total() {
+    uint64_t total = 0;
+    for (int move_index = 0; move_index < root_node_stat_count; ++move_index)
+        for (int thread = 0; thread < Search::num_threads; ++thread)
+            total += root_node_counts[thread][move_index].load(
+                std::memory_order_relaxed);
+    return total;
+}
+
+inline double root_node_fraction_multiplier(uint64_t best_nodes,
+                                            uint64_t total_nodes) {
+    if (total_nodes == 0 || best_nodes > total_nodes) return 1.0;
+    const double fraction = static_cast<double>(best_nodes)
+        / static_cast<double>(total_nodes);
+    if (fraction >= 0.60) return 0.85;
+    if (fraction <= 0.20) return 1.15;
+    return 1.0;
 }
 #ifdef COCO_TESTING
 thread_local int nmp_test_attempts = 0;
 thread_local int nmp_test_cutoffs = 0;
+thread_local int probcut_test_attempts = 0;
+thread_local int probcut_test_cutoffs = 0;
+thread_local uint64_t probcut_test_nodes = 0;
+thread_local int probcut_test_last_score = -INFINITY_SCORE;
 #endif
 
 // Time utility in milliseconds
@@ -125,21 +150,237 @@ std::string move_to_str(Move m) {
 
 const int MAX_PLY = 128;
 thread_local Move killer_moves[MAX_PLY][2];
+thread_local Move explicit_pv[MAX_PLY][MAX_PLY];
+thread_local int explicit_pv_length[MAX_PLY];
 thread_local Color root_color = WHITE;
 thread_local int16_t history_table[2][2][2][7][64]; // [color][threat_from][threat_to][piece_type][to_square] - size 7 to prevent out-of-bounds on NO_PIECE_TYPE
 int lmr_table[64][64];
 
 using Search::NodeType;
 
+int get_pv(Board& board, Move* pv_array, int max_pv_depth);
+int get_pv_impl(Board& board, Move* pv_array, int max_pv_depth,
+                bool include_bound_moves);
+
+inline void reset_explicit_pv(int ply) {
+    if (ply >= 0 && ply < MAX_PLY)
+        explicit_pv_length[ply] = ply;
+}
+
+inline void update_explicit_pv(int ply, Move move) {
+    if (ply < 0 || ply >= MAX_PLY || move.is_none()) return;
+    explicit_pv[ply][ply] = move;
+    int end = ply + 1;
+    if (ply + 1 < MAX_PLY)
+        end = std::clamp(explicit_pv_length[ply + 1], ply + 1, MAX_PLY);
+    for (int index = ply + 1; index < end; ++index)
+        explicit_pv[ply][index] = explicit_pv[ply + 1][index];
+    explicit_pv_length[ply] = end;
+}
+
+int copy_explicit_pv(Move* output, int max_depth) {
+    if (!output || max_depth <= 0) return 0;
+    const int length = std::clamp(explicit_pv_length[0], 0,
+                                  std::min(max_depth, MAX_PLY));
+    for (int index = 0; index < length; ++index)
+        output[index] = explicit_pv[0][index];
+    return length;
+}
+
+int complete_explicit_pv_from_tt(Board& board, Move* pv, int length,
+                                 int max_depth, bool include_bound_moves) {
+    int replayed = 0;
+    for (; replayed < length; ++replayed) {
+        if (!board.make_move(pv[replayed], true)) {
+            length = replayed;
+            break;
+        }
+    }
+
+    if (length < max_depth) {
+        Move tail[MAX_PLY];
+        const int tail_length = get_pv_impl(
+            board, tail, max_depth - length, include_bound_moves);
+        for (int index = 0; index < tail_length; ++index)
+            pv[length + index] = tail[index];
+        length += tail_length;
+    }
+
+    for (int index = replayed - 1; index >= 0; --index)
+        board.unmake_move(pv[index]);
+    return length;
+}
+
 struct SearchStack {
     int piece = -1;
     int to_sq = -1;
     int static_eval = INFINITY_SCORE;
     Move current_move;
+#ifdef COCO_CORRHIST_PROFILE
+    int16_t corr_profile_value[3]{};
+#endif
 };
 thread_local SearchStack search_stack[MAX_PLY + 4];
 thread_local int16_t cont_history[2][7][64][7][64];
 thread_local int16_t capture_history[12][64][6];
+
+#ifdef COCO_CORRHIST_PROFILE
+// Compile-time-only shadow profiler for Phase 3.1. It never changes an
+// evaluation or a search decision. The three tables isolate table-size and
+// cross-search-lifetime effects while replaying the rejected calibration.
+struct CorrHistProfileStats {
+    uint64_t lookups = 0;
+    uint64_t occupied_hits = 0;
+    uint64_t exact_key_hits = 0;
+    uint64_t collisions = 0;
+    uint64_t cross_search_hits = 0;
+    uint64_t updates = 0;
+    uint64_t informative_predictions = 0;
+    uint64_t sign_matches = 0;
+    uint64_t absolute_error_before = 0;
+    uint64_t absolute_error_after = 0;
+    uint64_t saturations = 0;
+};
+
+struct CorrHistProfileEntry {
+    int16_t value = 0;
+    uint16_t key = 0;
+    uint32_t last_search = 0;
+    bool occupied = false;
+};
+
+template <size_t Size>
+struct CorrHistProfileTable {
+    static_assert((Size & (Size - 1)) == 0);
+    CorrHistProfileEntry entries[2][Size]{};
+    CorrHistProfileStats stats{};
+
+    void begin_search(bool clear_entries) {
+        stats = CorrHistProfileStats{};
+        if (clear_entries)
+            std::memset(entries, 0, sizeof(entries));
+    }
+
+    int16_t lookup(Color side, uint16_t key, uint32_t search_generation) {
+        CorrHistProfileEntry& entry = entries[side][key & (Size - 1)];
+        ++stats.lookups;
+        if (!entry.occupied)
+            return 0;
+        ++stats.occupied_hits;
+        if (entry.key == key)
+            ++stats.exact_key_hits;
+        else
+            ++stats.collisions;
+        if (entry.last_search != 0 && entry.last_search < search_generation)
+            ++stats.cross_search_hits;
+        return entry.value;
+    }
+
+    void update(Color side, uint16_t key, uint32_t search_generation,
+                int16_t prediction, int raw_eval, int result, int depth) {
+        const int error = result - raw_eval;
+        const int correction = prediction * 29 / 256;
+        ++stats.updates;
+        stats.absolute_error_before += std::abs(error);
+        stats.absolute_error_after += std::abs(error - correction);
+        if (prediction != 0 && error != 0) {
+            ++stats.informative_predictions;
+            if ((prediction > 0) == (error > 0))
+                ++stats.sign_matches;
+        }
+
+        const int bonus = std::clamp(error * depth / 8, -256, 256);
+        CorrHistProfileEntry& entry = entries[side][key & (Size - 1)];
+        int value = entry.value;
+        value += bonus - value * std::abs(bonus) / 1024;
+        entry.value = static_cast<int16_t>(std::clamp(value, -1024, 1024));
+        entry.key = key;
+        entry.last_search = search_generation;
+        entry.occupied = true;
+        if (std::abs(entry.value) >= 1000)
+            ++stats.saturations;
+    }
+};
+
+// The UCI layer creates fresh OS search threads for every `go`. Keeping the
+// persistent shadow outside thread-local storage is therefore essential to
+// measure actual between-move lifetime. Only worker 0 touches these objects.
+CorrHistProfileTable<16384> corr_profile_old_reset;
+CorrHistProfileTable<4096> corr_profile_small_reset;
+CorrHistProfileTable<4096> corr_profile_small_persistent;
+uint32_t corr_profile_search_generation = 0;
+
+inline void corrhist_profile_begin_search() {
+    ++corr_profile_search_generation;
+    corr_profile_old_reset.begin_search(true);
+    corr_profile_small_reset.begin_search(true);
+    corr_profile_small_persistent.begin_search(false);
+}
+
+inline void corrhist_profile_lookup(const Board& board, SearchStack& stack) {
+    if (active_thread_id != 0)
+        return;
+    const Color side = board.get_side_to_move();
+    const uint16_t key = board.get_pawn_key();
+    stack.corr_profile_value[0] = corr_profile_old_reset.lookup(
+        side, key, corr_profile_search_generation);
+    stack.corr_profile_value[1] = corr_profile_small_reset.lookup(
+        side, key, corr_profile_search_generation);
+    stack.corr_profile_value[2] = corr_profile_small_persistent.lookup(
+        side, key, corr_profile_search_generation);
+}
+
+inline void corrhist_profile_update(const Board& board, const SearchStack& stack,
+                                    int raw_eval, int result, int depth,
+                                    bool in_check, Move best_move,
+                                    uint8_t bound, Move excluded_move) {
+    if (active_thread_id != 0 || in_check || !excluded_move.is_none()
+        || best_move.is_none()
+        || best_move.is_capture() || best_move.is_promotion()
+        || std::abs(result) >= MATE_THRESHOLD)
+        return;
+    if ((bound == HASH_BETA && result <= raw_eval)
+        || (bound == HASH_ALPHA && result >= raw_eval))
+        return;
+
+    const Color side = board.get_side_to_move();
+    const uint16_t key = board.get_pawn_key();
+    corr_profile_old_reset.update(side, key, corr_profile_search_generation,
+                                  stack.corr_profile_value[0], raw_eval,
+                                  result, depth);
+    corr_profile_small_reset.update(side, key, corr_profile_search_generation,
+                                    stack.corr_profile_value[1], raw_eval,
+                                    result, depth);
+    corr_profile_small_persistent.update(
+        side, key, corr_profile_search_generation,
+        stack.corr_profile_value[2], raw_eval, result, depth);
+}
+
+template <size_t Size>
+void print_corrhist_profile_table(const char* name,
+                                  const CorrHistProfileTable<Size>& table) {
+    const CorrHistProfileStats& stats = table.stats;
+    std::cout << "info string corrhist_profile " << name
+              << " lookups=" << stats.lookups
+              << " occupied=" << stats.occupied_hits
+              << " exact=" << stats.exact_key_hits
+              << " collisions=" << stats.collisions
+              << " cross_search=" << stats.cross_search_hits
+              << " updates=" << stats.updates
+              << " informative=" << stats.informative_predictions
+              << " sign_matches=" << stats.sign_matches
+              << " abs_before=" << stats.absolute_error_before
+              << " abs_after=" << stats.absolute_error_after
+              << " saturations=" << stats.saturations << "\n";
+}
+
+inline void corrhist_profile_print() {
+    print_corrhist_profile_table("old_reset_16384", corr_profile_old_reset);
+    print_corrhist_profile_table("small_reset_4096", corr_profile_small_reset);
+    print_corrhist_profile_table("small_persistent_4096",
+                                 corr_profile_small_persistent);
+}
+#endif
 
 inline bool root_move_is_excluded(Move move) {
     for (int i = 0; i < root_excluded_count; ++i) {
@@ -199,6 +440,24 @@ inline uint64_t aggregate_tbhits() {
     for (int thread = 0; thread < Search::num_threads; ++thread)
         total += Search::thread_stats[thread].tbhits.load(std::memory_order_relaxed);
     return total;
+}
+
+inline void widen_aspiration_window(int score, int& alpha, int& beta,
+                                    int& delta, bool fail_low,
+                                    bool record = true) {
+    if (fail_low) {
+        beta = (alpha + beta) / 2;
+        alpha = std::max(score - delta, -INFINITY_SCORE);
+        if (record)
+            Search::thread_stats[active_thread_id].aspiration_fail_lows
+                .fetch_add(1, std::memory_order_relaxed);
+    } else {
+        beta = std::min(score + delta, INFINITY_SCORE);
+        if (record)
+            Search::thread_stats[active_thread_id].aspiration_fail_highs
+                .fetch_add(1, std::memory_order_relaxed);
+    }
+    delta += delta / 2;
 }
 
 inline void update_history(int16_t& entry, int bonus) {
@@ -385,15 +644,21 @@ private:
 int quiescence(Board& board, int alpha, int beta, int ply);
 
 // Extract Principal Variation (PV) from the Transposition Table
-int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
+int get_pv_impl(Board& board, Move* pv_array, int max_pv_depth,
+                bool include_bound_moves) {
     int pv_length = 0;
     U64 key = board.get_hash_key();
     int score;
+    uint8_t depth;
+    uint8_t flag;
     Move best_move;
     
     while (pv_length < max_pv_depth) {
-        // Probe TT with depth 0 to retrieve best move without score restriction
-        if (!search_tt().probe(key, score, best_move, 0, -INFINITY_SCORE, INFINITY_SCORE, 0) || best_move.is_none()) {
+        const bool found_entry = include_bound_moves
+            ? search_tt().probe_entry(key, score, depth, flag, best_move, 0)
+            : search_tt().probe(key, score, best_move, 0,
+                                -INFINITY_SCORE, INFINITY_SCORE, 0);
+        if (!found_entry || best_move.is_none()) {
             break;
         }
         
@@ -434,9 +699,14 @@ int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
     return pv_length;
 }
 
+int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
+    return get_pv_impl(board, pv_array, max_pv_depth, false);
+}
+
 // Alpha-Beta Search Core with Null Move Pruning (NMP)
 int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType node_type, bool in_null_move_search, int parent_eval_1, int parent_eval_2, Move excluded_move, int double_ext) {
     const bool is_pv = node_type == NodeType::PV;
+    reset_explicit_pv(ply);
     // Cooperative search abortion check
     check_time();
     if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
@@ -504,8 +774,13 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     bool in_check = board.is_square_attacked(king_sq, us ^ 1);
 
     // NMP and the later forward-pruning stages share one static evaluation.
-    int static_eval = Evaluation::evaluate(board);
+    const int raw_static_eval = Evaluation::evaluate(board);
+    int static_eval = raw_static_eval;
     if (ply < MAX_PLY + 4) search_stack[ply].static_eval = static_eval;
+#ifdef COCO_CORRHIST_PROFILE
+    if (ply < MAX_PLY + 4)
+        corrhist_profile_lookup(board, search_stack[ply]);
+#endif
 
     // Compute improving before any evaluation-based pruning. Checks inherit
     // the last usable evaluations rather than treating a missing value as an
@@ -578,6 +853,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 return tt_score;
             }
         }
+
     }
     if (tt_move == excluded_move
         || (ply == 0 && (!root_move_is_allowed(tt_move) || root_move_is_excluded(tt_move)))) {
@@ -608,6 +884,73 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             int q_score = quiescence(board, alpha, beta, ply);
             if (q_score <= alpha) {
                 return q_score;
+            }
+        }
+    }
+
+    // Capture-only ProbCut. A clearly winning tactical capture is verified
+    // first by qsearch and then by a reduced null-window search. Keeping this
+    // independent of capture-history thresholds gives the next candidate a
+    // clean baseline, while the SEE gate avoids spending work on losing
+    // exchanges. PV, check, excluded-move, and decisive-score nodes are kept
+    // out of this speculative cutoff path.
+    if (Search::mate_limit == 0 && depth >= 5 && !is_pv && !in_check
+        && excluded_move.is_none() && std::abs(beta) < MATE_SCORE - MAX_PLY) {
+        constexpr int PROBCUT_MARGIN = 200;
+        constexpr int PROBCUT_REDUCTION = 4;
+        const int probcut_beta = std::min(beta + PROBCUT_MARGIN,
+                                          MATE_SCORE - MAX_PLY - 1);
+        const int see_threshold = std::max(0, probcut_beta - static_eval);
+        MoveList probcut_moves;
+        generate_capture_moves(board, probcut_moves);
+        MovePicker probcut_picker(board, probcut_moves, tt_move, ply);
+        LegalityMasks probcut_masks = board.get_legality_masks();
+        Move probcut_move;
+
+        while (probcut_picker.next(probcut_move)) {
+            if (probcut_move == excluded_move || board.see(probcut_move) < see_threshold
+                || !board.is_move_legal(probcut_move, probcut_masks)) {
+                continue;
+            }
+
+#ifdef COCO_TESTING
+            if (ply == 0) ++probcut_test_attempts;
+            const uint64_t probcut_nodes_before = nodes_visited;
+#endif
+            if (ply < MAX_PLY) {
+                search_stack[ply].piece = -1;
+                search_stack[ply].to_sq = -1;
+                search_stack[ply].current_move = probcut_move;
+            }
+
+            board.make_move(probcut_move, true);
+            search_tt().prefetch(board.get_hash_key());
+            int probcut_score = -quiescence(board, -probcut_beta,
+                                            -probcut_beta + 1, ply + 1);
+            if (probcut_score >= probcut_beta) {
+                probcut_score = -alpha_beta(
+                    board, -probcut_beta, -probcut_beta + 1,
+                    depth - PROBCUT_REDUCTION, ply + 1, NodeType::NON_PV,
+                    in_null_move_search, next_parent_eval_1, next_parent_eval_2,
+                    Move(), double_ext);
+            }
+            board.unmake_move(probcut_move);
+
+#ifdef COCO_TESTING
+            if (ply == 0) {
+                probcut_test_nodes += nodes_visited - probcut_nodes_before;
+                probcut_test_last_score = probcut_score;
+            }
+#endif
+            if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
+            if (probcut_score >= probcut_beta) {
+#ifdef COCO_TESTING
+                if (ply == 0) ++probcut_test_cutoffs;
+#endif
+                search_tt().store(board.get_hash_key(), probcut_move,
+                                  probcut_score, depth - PROBCUT_REDUCTION + 1,
+                                  HASH_BETA, ply);
+                return probcut_score;
             }
         }
     }
@@ -683,7 +1026,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 continue;
             }
         }
-        
+
         // Symmetrical illegal move filtering
         if (!board.is_move_legal(move, masks)) {
             continue;
@@ -861,6 +1204,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         if (score > best_score) {
             best_score = score;
             best_move_in_node = move;
+            if (is_pv) update_explicit_pv(ply, move);
         }
         
         if (score > alpha) {
@@ -969,6 +1313,13 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 }
                 
                 if (ply == 0) root_search_best_move = move;
+#ifdef COCO_CORRHIST_PROFILE
+                if (ply < MAX_PLY + 4)
+                    corrhist_profile_update(board, search_stack[ply],
+                                            raw_static_eval, score, depth,
+                                            in_check, move, HASH_BETA,
+                                            excluded_move);
+#endif
                 return score;
             }
         }
@@ -990,6 +1341,12 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     if (best_score <= alpha_orig) {
         flag = HASH_ALPHA;
     }
+#ifdef COCO_CORRHIST_PROFILE
+    if (ply < MAX_PLY + 4)
+        corrhist_profile_update(board, search_stack[ply], raw_static_eval,
+                                best_score, depth, in_check,
+                                best_move_in_node, flag, excluded_move);
+#endif
     if (ply == 0) root_search_best_move = best_move_in_node;
     if (excluded_move.is_none() && !restricted_root) {
         search_tt().store(board.get_hash_key(), best_move_in_node, best_score, depth, flag, ply);
@@ -1000,13 +1357,14 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
 
 // Quiescence Search
 int quiescence(Board& board, int alpha, int beta, int ply) {
+    const bool is_pv = beta - alpha > 1;
+    reset_explicit_pv(ply);
     check_time();
     if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
 
     if (ply > 0 && (board.get_halfmove_clock() >= 100 || board.is_repetition()))
         return draw_score(board);
 
-    
     nodes_visited++;
     if (ply > max_ply_reached) {
         max_ply_reached = ply;
@@ -1092,6 +1450,7 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
         if (score > best_score) {
             best_score = score;
             best_move = move;
+            if (is_pv) update_explicit_pv(ply, move);
         }
         
         if (score >= beta) {
@@ -1126,6 +1485,66 @@ namespace Search {
     int num_threads = 1;
     ThreadStats thread_stats[MAX_THREADS];
 
+    void publish_completed_result(int thread_id, Move move, int score, int depth) {
+        if (thread_id < 0 || thread_id >= num_threads || move.is_none() || depth <= 0)
+            return;
+        ThreadStats& stats = thread_stats[thread_id];
+        stats.completed_score.store(score, std::memory_order_relaxed);
+        stats.completed_depth.store(depth, std::memory_order_relaxed);
+        stats.completed_move.store(move.value, std::memory_order_release);
+    }
+
+    Move select_smp_voted_move(Move main_move) {
+        if (num_threads <= 1) return main_move;
+
+        int minimum_score = INFINITY_SCORE;
+        for (int thread = 0; thread < num_threads; ++thread) {
+            const uint16_t raw = thread_stats[thread].completed_move.load(
+                std::memory_order_acquire);
+            const int depth = thread_stats[thread].completed_depth.load(
+                std::memory_order_relaxed);
+            if (raw != 0 && depth > 0)
+                minimum_score = std::min(minimum_score,
+                    thread_stats[thread].completed_score.load(
+                        std::memory_order_relaxed));
+        }
+        if (minimum_score == INFINITY_SCORE) return main_move;
+
+        Move selected = main_move;
+        uint64_t selected_weight = 0;
+        for (int candidate_thread = 0; candidate_thread < num_threads;
+             ++candidate_thread) {
+            const uint16_t candidate_raw =
+                thread_stats[candidate_thread].completed_move.load(
+                    std::memory_order_acquire);
+            if (candidate_raw == 0) continue;
+
+            uint64_t total_weight = 0;
+            for (int voter = 0; voter < num_threads; ++voter) {
+                if (thread_stats[voter].completed_move.load(
+                        std::memory_order_acquire) != candidate_raw)
+                    continue;
+                const int depth = std::max(0,
+                    thread_stats[voter].completed_depth.load(
+                        std::memory_order_relaxed));
+                const int score = thread_stats[voter].completed_score.load(
+                    std::memory_order_relaxed);
+                const uint64_t score_bonus = static_cast<uint64_t>(
+                    std::clamp(score - minimum_score, 0, 60000));
+                total_weight += static_cast<uint64_t>(depth) * depth
+                              + score_bonus * static_cast<uint64_t>(depth + 1);
+            }
+
+            const Move candidate(candidate_raw);
+            if (total_weight > selected_weight
+                || (total_weight == selected_weight && candidate == main_move)) {
+                selected = candidate;
+                selected_weight = total_weight;
+            }
+        }
+        return selected.is_none() ? main_move : selected;
+    }
+
     int RFP_Margin = 70;
     int LMR_Constant_Scaled = 218;
     int NMP_Base = 3;
@@ -1153,20 +1572,33 @@ namespace Search {
     }
 
     void allocate_time(int time_left, int increment, int moves_to_go) {
-        int usable_time = time_left - Move_Overhead;
-        if (usable_time <= 0) {
-            usable_time = 10;
+        // An increment is not clock time until the move is completed.  It may
+        // enlarge the preferred (soft) budget, but neither boundary may spend
+        // more than the currently available clock.
+        if (time_left <= 0) {
+            soft_limit = 1;
+            hard_limit = 1;
+            return;
         }
 
-        const int horizon = moves_to_go > 0 ? std::clamp(moves_to_go, 1, 50) : 40;
-        soft_limit = static_cast<uint64_t>((usable_time / horizon) + increment);
+        const uint64_t available = static_cast<uint64_t>(time_left);
+        const uint64_t configured_overhead = static_cast<uint64_t>(
+            std::max(0, Move_Overhead));
+        const uint64_t reserve = std::min(configured_overhead, available / 2);
+        const uint64_t usable = std::max<uint64_t>(1, available - reserve);
+        const int horizon = moves_to_go > 0
+            ? std::clamp(moves_to_go, 1, 50) : 40;
+        const uint64_t base = std::max<uint64_t>(1, usable / horizon);
+        const uint64_t increment_share =
+            static_cast<uint64_t>(std::max(0, increment)) * 3 / 4;
+        const uint64_t requested_soft = std::min(usable, base + increment_share);
 
-        int calculated_multiplier = static_cast<int>(soft_limit * 2.5);
-        int absolute_max_cap = static_cast<int>(usable_time * 0.40);
-        hard_limit = static_cast<uint64_t>(std::min(calculated_multiplier, absolute_max_cap));
-
-        if (soft_limit < 15) soft_limit = 15;
-        if (hard_limit < 25) hard_limit = 25;
+        const uint64_t hard_cap = std::max<uint64_t>(1, usable * 40 / 100);
+        const uint64_t minimum_hard = std::min<uint64_t>(25, hard_cap);
+        const uint64_t requested_hard = std::max(
+            minimum_hard, requested_soft * 5 / 2);
+        hard_limit = std::min(hard_cap, requested_hard);
+        soft_limit = std::min(requested_soft, hard_limit);
     }
 
     // Compute time controls from clock parameters (called before thread launch)
@@ -1181,11 +1613,12 @@ namespace Search {
             // Infinite analysis is still allowed to have an explicit depth or
             // node cap, but it never consumes the supplied clock values.
         } else if (limits.movetime > 0) {
-            int usable_movetime = limits.movetime - Move_Overhead;
-            if (usable_movetime < 10) {
-                usable_movetime = std::max(5, limits.movetime / 2);
-            }
-            hard_limit = static_cast<uint64_t>(std::min(usable_movetime, 55000));
+            const int requested_movetime = std::min(limits.movetime, 55000);
+            int usable_movetime = requested_movetime - std::max(0, Move_Overhead);
+            if (usable_movetime < 1)
+                usable_movetime = std::max(1, requested_movetime / 2);
+            hard_limit = static_cast<uint64_t>(
+                std::min(usable_movetime, requested_movetime));
             soft_limit = hard_limit;
             target_time = start_time.load(std::memory_order_relaxed) + hard_limit;
         } else {
@@ -1194,23 +1627,9 @@ namespace Search {
 
             if (my_time > 0) {
                 allocate_time(my_time, my_inc, limits.movestogo);
-
-                int safety_buffer = Move_Overhead + 10;
-                if (hard_limit + safety_buffer > static_cast<uint64_t>(my_time)) {
-                    if (my_time > safety_buffer) {
-                        hard_limit = my_time - safety_buffer;
-                    } else {
-                        hard_limit = std::max(5, my_time / 2);
-                    }
-                }
-
-                if (hard_limit > static_cast<uint64_t>(my_time)) {
-                    hard_limit = my_time;
-                }
                 target_time = start_time.load(std::memory_order_relaxed) + hard_limit;
             } else if (my_time == 0) {
-                soft_limit = 10;
-                hard_limit = 20;
+                allocate_time(my_time, my_inc, limits.movestogo);
                 target_time = start_time.load(std::memory_order_relaxed) + hard_limit;
             } else {
                 soft_limit = 0;
@@ -1253,7 +1672,8 @@ namespace Search {
             if (!board.is_move_legal(moves.moves[i], masks)) continue;
             root_node_stats[root_node_stat_count].move = moves.moves[i];
             for (int t = 0; t < num_threads; ++t)
-                root_node_counts[t][root_node_stat_count] = 0;
+                root_node_counts[t][root_node_stat_count].store(
+                    0, std::memory_order_relaxed);
             ++root_node_stat_count;
         }
     }
@@ -1291,6 +1711,11 @@ namespace Search {
         thread_stats[active_thread_id].nodes.store(0, std::memory_order_relaxed);
         thread_stats[active_thread_id].tbhits.store(0, std::memory_order_relaxed);
         thread_stats[active_thread_id].seldepth.store(0, std::memory_order_relaxed);
+        thread_stats[active_thread_id].aspiration_fail_lows.store(0, std::memory_order_relaxed);
+        thread_stats[active_thread_id].aspiration_fail_highs.store(0, std::memory_order_relaxed);
+        thread_stats[active_thread_id].completed_move.store(0, std::memory_order_relaxed);
+        thread_stats[active_thread_id].completed_score.store(0, std::memory_order_relaxed);
+        thread_stats[active_thread_id].completed_depth.store(0, std::memory_order_relaxed);
     }
 
     void finish_helpers() {
@@ -1312,6 +1737,9 @@ namespace Search {
         currmove_report_depth = -1;
         reported_currmove_count = 0;
         search_tt().new_search();
+#ifdef COCO_CORRHIST_PROFILE
+        corrhist_profile_begin_search();
+#endif
 
         // Reset killer moves and history table at start of search
         for (int i = 0; i < MAX_PLY; ++i) {
@@ -1440,14 +1868,16 @@ namespace Search {
                     line.move = selected;
                     line.score = score;
                     line.root_nodes = root_nodes_for_move(selected);
-                    line.pv.push_back(selected);
-
-                    if (board.make_move(selected)) {
-                        Move tail[63];
-                        const int tail_length = get_pv(board, tail, 63);
-                        for (int i = 0; i < tail_length; ++i)
-                            line.pv.push_back(tail[i]);
-                        board.unmake_move(selected);
+                    Move propagated[64];
+                    int propagated_length = copy_explicit_pv(propagated, 64);
+                    propagated_length = complete_explicit_pv_from_tt(
+                        board, propagated, propagated_length, 64,
+                        std::abs(score) > MATE_THRESHOLD);
+                    if (propagated_length > 0 && propagated[0] == selected) {
+                        for (int i = 0; i < propagated_length; ++i)
+                            line.pv.push_back(propagated[i]);
+                    } else {
+                        line.pv.push_back(selected);
                     }
 
                     current_lines.push_back(std::move(line));
@@ -1565,11 +1995,9 @@ namespace Search {
                     }
                     
                     if (score <= alpha) {
-                        alpha = std::max(alpha - delta, -INFINITY_SCORE);
-                        delta += delta / 2;
+                        widen_aspiration_window(score, alpha, beta, delta, true);
                     } else if (score >= beta) {
-                        beta = std::min(beta + delta, INFINITY_SCORE);
-                        delta += delta / 2;
+                        widen_aspiration_window(score, alpha, beta, delta, false);
                     } else {
                         // Score is within bounds, search succeeded
                         break;
@@ -1587,24 +2015,22 @@ namespace Search {
                 break;
             }
             
-            // Probe TT for the best move of the completed depth
-            int temp_score;
-            Move best_move_depth;
-            search_tt().probe(board.get_hash_key(), temp_score, best_move_depth, current_depth, -INFINITY_SCORE, INFINITY_SCORE, 0);
-            
-            if (!best_move_depth.is_none()) {
-                last_completed_best_move = best_move_depth;
-            }
-            
-            // Extract the PV from the TT cache
+            // Consume the recursively propagated PV from this completed
+            // iteration. Helpers may update the shared TT concurrently, so a
+            // post-search TT walk is not authoritative for the main line.
             Move pv[64];
-            int pv_len = get_pv(board, pv, 64);
-            if (pv_len > 0 && last_completed_best_move.is_none()) {
+            int pv_len = copy_explicit_pv(pv, 64);
+            pv_len = complete_explicit_pv_from_tt(
+                board, pv, pv_len, 64, std::abs(score) > MATE_THRESHOLD);
+            if (pv_len > 0) {
                 last_completed_best_move = pv[0];
+            } else if (!root_search_best_move.is_none()) {
+                last_completed_best_move = root_search_best_move;
             }
             if (pv_len > 1) {
                 last_completed_ponder_move = pv[1];
             }
+            publish_completed_result(0, last_completed_best_move, score, current_depth);
 
             // Track stability of the best move
             Move current_best_move = last_completed_best_move;
@@ -1631,6 +2057,12 @@ namespace Search {
                 if (score < last_score - 30) {
                     time_multiplier *= 1.35; // Score dropping: think 35% longer
                 }
+
+                const uint64_t accounted_root_nodes = root_nodes_total();
+                const uint64_t best_root_nodes = current_best_move.is_none()
+                    ? 0 : root_nodes_for_move(current_best_move);
+                time_multiplier *= root_node_fraction_multiplier(
+                    best_root_nodes, accounted_root_nodes);
             }
 
             uint64_t adjusted_soft_limit = soft_limit;
@@ -1700,6 +2132,22 @@ namespace Search {
             std::this_thread::yield();
         finish_helpers();
 
+        const Move voted_move = select_smp_voted_move(last_completed_best_move);
+        if (voted_move != last_completed_best_move && !voted_move.is_none()) {
+            const LegalityMasks masks = board.get_legality_masks();
+            if (root_move_is_allowed(voted_move)
+                && board.is_move_legal(voted_move, masks)) {
+                last_completed_best_move = voted_move;
+                last_completed_ponder_move = Move();
+                if (board.make_move(voted_move, true)) {
+                    Move tail[1];
+                    if (get_pv(board, tail, 1) > 0)
+                        last_completed_ponder_move = tail[0];
+                    board.unmake_move(voted_move);
+                }
+            }
+        }
+
         if (node_limit != 0) {
             thread_stats[0].nodes.store(nodes_visited, std::memory_order_relaxed);
             thread_stats[0].seldepth.store(max_ply_reached, std::memory_order_relaxed);
@@ -1721,6 +2169,9 @@ namespace Search {
         }
 
         // Report final best move designation to GUI
+#ifdef COCO_CORRHIST_PROFILE
+        corrhist_profile_print();
+#endif
         std::cout << "bestmove " << move_to_str(last_completed_best_move);
         if (Ponder && !last_completed_ponder_move.is_none())
             std::cout << " ponder " << move_to_str(last_completed_ponder_move);
@@ -1777,11 +2228,9 @@ namespace Search {
                     if (b_abort.load(std::memory_order_relaxed)) break;
 
                     if (score <= alpha) {
-                        alpha = std::max(alpha - delta, -INFINITY_SCORE);
-                        delta += delta / 2;
+                        widen_aspiration_window(score, alpha, beta, delta, true);
                     } else if (score >= beta) {
-                        beta = std::min(beta + delta, INFINITY_SCORE);
-                        delta += delta / 2;
+                        widen_aspiration_window(score, alpha, beta, delta, false);
                     } else {
                         break;
                     }
@@ -1795,6 +2244,8 @@ namespace Search {
             if (b_abort.load(std::memory_order_relaxed)) break;
 
             last_score = score;
+            publish_completed_result(thread_id, root_search_best_move,
+                                     score, current_depth);
         }
 
         thread_stats[thread_id].nodes.store(nodes_visited, std::memory_order_relaxed);
@@ -1858,6 +2309,36 @@ namespace Search {
         return {score, nmp_test_attempts, nmp_test_cutoffs};
     }
 
+    ProbCutTestResult test_probcut_window(Board& board, int alpha, int beta,
+                                          int depth, NodeType node_type) {
+        nodes_visited = 0;
+        max_ply_reached = 0;
+        active_thread_id = 0;
+        start_time.store(get_time_ms(), std::memory_order_relaxed);
+        root_color = board.get_side_to_move();
+        probcut_test_attempts = 0;
+        probcut_test_cutoffs = 0;
+        probcut_test_nodes = 0;
+        probcut_test_last_score = -INFINITY_SCORE;
+        b_abort.store(false, std::memory_order_relaxed);
+        hard_limit = 0;
+        node_limit = 0;
+        const int score = ::alpha_beta(board, alpha, beta, depth, 0, node_type);
+        return {score, probcut_test_attempts, probcut_test_cutoffs,
+                probcut_test_nodes, probcut_test_last_score};
+    }
+
+    AspirationWindowTestResult test_widen_aspiration(
+        int score, int alpha, int beta, int delta, bool fail_low) {
+        widen_aspiration_window(score, alpha, beta, delta, fail_low, false);
+        return {alpha, beta, delta};
+    }
+
+    double test_root_node_fraction_multiplier(uint64_t best_nodes,
+                                              uint64_t total_nodes) {
+        return root_node_fraction_multiplier(best_nodes, total_nodes);
+    }
+
     uint64_t test_root_nodes_total() {
         uint64_t total = 0;
         for (int t = 0; t < num_threads; ++t)
@@ -1870,6 +2351,20 @@ namespace Search {
         return root_nodes_for_move(move);
     }
 
+    Move test_select_smp_voted_move(Move main_move) {
+        return select_smp_voted_move(main_move);
+    }
+
+    int test_get_explicit_pv(Move* pv, int max_depth) {
+        return copy_explicit_pv(pv, max_depth);
+    }
+
+    int test_get_completed_explicit_pv(Board& board, Move* pv, int max_depth) {
+        const int length = copy_explicit_pv(pv, max_depth);
+        return complete_explicit_pv_from_tt(
+            board, pv, length, max_depth, true);
+    }
+
     int test_get_pv(Board& board, Move* pv, int max_depth) {
         return get_pv(board, pv, max_depth);
     }
@@ -1880,5 +2375,6 @@ namespace Search {
         draw = wdl.draw;
         loss = wdl.loss;
     }
+
 #endif
 }

@@ -20,18 +20,24 @@ CORE_SOURCES = [
 ]
 
 TESTS = [
+    "aspiration_window_test",
     "board_state_test",
+    "explicit_pv_test",
     "hce_trace_test",
     "mate_distance_test",
     "nmp_guard_test",
     "nnue_symmetry_test",
     "pv_legality_test",
+    "probcut_guard_test",
     "qsearch_correctness_test",
     "random_move_test",
     "root_node_accounting_test",
+    "root_time_scaling_test",
     "search_failsoft_test",
     "see_test",
+    "smp_vote_test",
     "tt_test",
+    "time_allocation_test",
     "uci_score_test",
 ]
 

@@ -50,6 +50,11 @@ namespace Search {
         std::atomic<uint64_t> nodes{0};
         std::atomic<uint64_t> tbhits{0};
         std::atomic<int> seldepth{0};
+        std::atomic<uint64_t> aspiration_fail_lows{0};
+        std::atomic<uint64_t> aspiration_fail_highs{0};
+        std::atomic<uint16_t> completed_move{0};
+        std::atomic<int> completed_score{0};
+        std::atomic<int> completed_depth{0};
     };
     extern ThreadStats thread_stats[MAX_THREADS];
 
@@ -107,13 +112,34 @@ namespace Search {
         int attempts;
         int cutoffs;
     };
+    struct ProbCutTestResult {
+        int score;
+        int attempts;
+        int cutoffs;
+        uint64_t probe_nodes;
+        int last_probe_score;
+    };
+    struct AspirationWindowTestResult {
+        int alpha;
+        int beta;
+        int delta;
+    };
     int test_quiescence_window(Board& board, int alpha, int beta);
     int test_alpha_beta_window(Board& board, int alpha, int beta, int depth);
     int test_alpha_beta_pv(Board& board, int alpha, int beta, int depth);
     NmpTestResult test_nmp_window(Board& board, int alpha, int beta, int depth,
                                   NodeType node_type);
+    ProbCutTestResult test_probcut_window(Board& board, int alpha, int beta,
+                                          int depth, NodeType node_type);
+    AspirationWindowTestResult test_widen_aspiration(
+        int score, int alpha, int beta, int delta, bool fail_low);
+    double test_root_node_fraction_multiplier(uint64_t best_nodes,
+                                              uint64_t total_nodes);
     uint64_t test_root_nodes_total();
     uint64_t test_root_nodes_for(Move move);
+    Move test_select_smp_voted_move(Move main_move);
+    int test_get_explicit_pv(Move* pv, int max_depth);
+    int test_get_completed_explicit_pv(Board& board, Move* pv, int max_depth);
     int test_get_pv(Board& board, Move* pv, int max_depth);
     void test_score_to_wdl(int score, int& win, int& draw, int& loss);
 #endif

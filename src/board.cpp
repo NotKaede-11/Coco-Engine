@@ -48,6 +48,9 @@ void Board::clear() {
     halfmove_clock = 0;
     fullmove_number = 1;
     hash_key = 0ULL;
+    pawn_key = 0ULL;
+    non_pawn_key[WHITE] = 0ULL;
+    non_pawn_key[BLACK] = 0ULL;
     history_ply = 0;
 
     // Initialize NNUE accumulator
@@ -77,6 +80,7 @@ void Board::init_zobrist() {
         zobrist_ep[i] = next_random();
     }
     zobrist_side = next_random();
+
 }
 
 U64 Board::calculate_hash() const {
@@ -95,6 +99,30 @@ U64 Board::calculate_hash() const {
         k ^= zobrist_side;
     }
     return k;
+}
+
+uint16_t Board::calculate_pawn_key() const {
+    uint16_t key = 0;
+    for (int color = WHITE; color <= BLACK; ++color) {
+        U64 pawns = pieces[color][PAWN];
+        while (pawns) {
+            const int square = pop_lsb(pawns);
+            key ^= static_cast<uint16_t>(zobrist_pieces[color][PAWN][square]);
+        }
+    }
+    return key;
+}
+
+uint16_t Board::calculate_non_pawn_key(Color color) const {
+    uint16_t key = 0;
+    for (int piece_type = KNIGHT; piece_type <= KING; ++piece_type) {
+        U64 occupied = pieces[color][piece_type];
+        while (occupied) {
+            const int square = pop_lsb(occupied);
+            key ^= static_cast<uint16_t>(zobrist_pieces[color][piece_type][square]);
+        }
+    }
+    return key;
 }
 
 bool Board::has_en_passant_capture() const {
@@ -231,6 +259,9 @@ bool Board::parse_fen(const std::string& fen) {
         en_passant_square = SQ_NONE;
     }
     hash_key = calculate_hash();
+    pawn_key = calculate_pawn_key();
+    non_pawn_key[WHITE] = calculate_non_pawn_key(WHITE);
+    non_pawn_key[BLACK] = calculate_non_pawn_key(BLACK);
     history_ply = 0;
 
     // Initialize NNUE accumulator
@@ -348,7 +379,9 @@ bool Board::make_move(Move move, bool checked) {
         en_passant_square,
         halfmove_clock,
         NO_PIECE,
-        hash_key
+        hash_key,
+        pawn_key,
+        {non_pawn_key[WHITE], non_pawn_key[BLACK]}
     };
     history_ply++;
 
@@ -376,7 +409,7 @@ bool Board::make_move(Move move, bool checked) {
             board_array[ep_pawn_sq] = NO_PIECE;
             clear_bit(occupancies[them], ep_pawn_sq);
             clear_bit(occupancies[BOTH], ep_pawn_sq);
-            hash_key ^= zobrist_pieces[them][PAWN][ep_pawn_sq];
+            xor_piece_keys(them, PAWN, ep_pawn_sq);
         } else {
             Piece captured = board_array[to];
             history[history_ply - 1].captured_piece = captured;
@@ -388,7 +421,7 @@ bool Board::make_move(Move move, bool checked) {
             clear_bit(pieces[them][cap_type], to);
             clear_bit(occupancies[them], to);
             clear_bit(occupancies[BOTH], to);
-            hash_key ^= zobrist_pieces[them][cap_type][to];
+            xor_piece_keys(them, cap_type, to);
         }
         halfmove_clock = 0; // Reset on capture
     } else {
@@ -408,8 +441,8 @@ bool Board::make_move(Move move, bool checked) {
     board_array[from] = NO_PIECE;
     board_array[to] = moving_piece;
 
-    hash_key ^= zobrist_pieces[us][pt][from];
-    hash_key ^= zobrist_pieces[us][pt][to];
+    xor_piece_keys(us, pt, from);
+    xor_piece_keys(us, pt, to);
 
     // Handle promotions
     if (move.is_promotion()) {
@@ -423,8 +456,8 @@ bool Board::make_move(Move move, bool checked) {
         set_bit(pieces[us][promo_pt], to);
         board_array[to] = (Piece)(us * 6 + promo_pt);
 
-        hash_key ^= zobrist_pieces[us][PAWN][to];
-        hash_key ^= zobrist_pieces[us][promo_pt][to];
+        xor_piece_keys(us, PAWN, to);
+        xor_piece_keys(us, promo_pt, to);
     }
 
     // Handle double pawn pushes (setup en passant)
@@ -451,8 +484,8 @@ bool Board::make_move(Move move, bool checked) {
         board_array[r_from] = NO_PIECE;
         board_array[r_to] = rook;
 
-        hash_key ^= zobrist_pieces[us][ROOK][r_from];
-        hash_key ^= zobrist_pieces[us][ROOK][r_to];
+        xor_piece_keys(us, ROOK, r_from);
+        xor_piece_keys(us, ROOK, r_to);
     } else if (flag == FLAG_QUEEN_CASTLE) {
         int r_from = (us == WHITE) ? SQ_A1 : SQ_A8;
         int r_to = (us == WHITE) ? SQ_D1 : SQ_D8;
@@ -471,8 +504,8 @@ bool Board::make_move(Move move, bool checked) {
         board_array[r_from] = NO_PIECE;
         board_array[r_to] = rook;
 
-        hash_key ^= zobrist_pieces[us][ROOK][r_from];
-        hash_key ^= zobrist_pieces[us][ROOK][r_to];
+        xor_piece_keys(us, ROOK, r_from);
+        xor_piece_keys(us, ROOK, r_to);
     }
 
     // Verify move legality (cannot expose king to check)
@@ -634,6 +667,9 @@ void Board::unmake_move(Move move) {
     en_passant_square = state.en_passant_square;
     halfmove_clock = state.halfmove_clock;
     hash_key = state.hash_key;
+    pawn_key = state.pawn_key;
+    non_pawn_key[WHITE] = state.non_pawn_key[WHITE];
+    non_pawn_key[BLACK] = state.non_pawn_key[BLACK];
 
     if (player == BLACK) {
         fullmove_number--;
@@ -707,7 +743,9 @@ bool Board::make_null_move() {
         en_passant_square,
         halfmove_clock,
         NO_PIECE,
-        hash_key
+        hash_key,
+        pawn_key,
+        {non_pawn_key[WHITE], non_pawn_key[BLACK]}
     };
     history_ply++;
 
@@ -738,6 +776,9 @@ void Board::unmake_null_move() {
     en_passant_square = state.en_passant_square;
     halfmove_clock = state.halfmove_clock;
     hash_key = state.hash_key;
+    pawn_key = state.pawn_key;
+    non_pawn_key[WHITE] = state.non_pawn_key[WHITE];
+    non_pawn_key[BLACK] = state.non_pawn_key[BLACK];
 
     side_to_move = (Color)(side_to_move ^ 1);
 }
