@@ -80,6 +80,10 @@ scripts/train_nnue.py
 
 # Local-only configuration and agent notes
 .agents/
+.impeccable/
+PRODUCT.md
+DESIGN.md
+DESIGN.json
 config.json
 task.md
 run_sprt.bat

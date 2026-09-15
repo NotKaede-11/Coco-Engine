@@ -1,0 +1,7 @@
+# Crawler policy for this site when served at a domain root.
+# On a GitHub Pages project URL, only the HOST ROOT /robots.txt is authoritative.
+# See docs/WEBSITE.md before changing hosting or claiming crawler eligibility.
+User-agent: *
+Allow: /
+
+Sitemap: https://notkaede-11.github.io/Coco-Engine/sitemap.xml

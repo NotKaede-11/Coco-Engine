@@ -1,23 +1,27 @@
 <div align="center">
 
+  <h1>Coco Chess Engine</h1>
+
   <img src="assets/logo.png" alt="Coco Chess Engine" width="900">
 
   <br>
   <br>
 
-  **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
+  **A free, open-source C++20 UCI chess engine with NNUE evaluation and Lazy SMP.**
 
   [![Stable release: v1.5.0][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
-  [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
+  [Homepage][homepage-link] · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-Coco is a cross-platform chess engine written in C++20. Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
+**Coco Chess Engine** is a free, open-source, cross-platform UCI engine maintained by [NotKaede-11](https://github.com/NotKaede-11). Written in C++20, it combines bitboards, staged move ordering, Lazy SMP parallel search, NNUE evaluation, and optional Syzygy tablebase probing. Releases are available for Windows, Linux, and macOS, with the neural network embedded.
+
+Coco Chess Engine and CuckooChess are different projects. This repository is the home of Coco, named after the character from *Witch Hat Atelier*.
 
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
@@ -199,3 +203,4 @@ Coco is free software distributed under the [GNU General Public License v3][lice
 [cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus
 [source-link]: src
 [issues-link]: https://github.com/NotKaede-11/Coco-Engine/issues
+[homepage-link]: https://notkaede-11.github.io/Coco-Engine/
