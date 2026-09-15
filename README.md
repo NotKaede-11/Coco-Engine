@@ -1,5 +1,7 @@
 <div align="center">
 
+  <h1>Coco Chess Engine</h1>
+
   <img src="assets/logo.png" alt="Coco Chess Engine" width="900">
 
   <br>
@@ -11,13 +13,13 @@
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
-  [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
+  [Official website](https://notkaede-11.github.io/coco-engine-website/) · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-Coco is a cross-platform chess engine written in C++20. Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
+**Coco Chess Engine** is a cross-platform C++20 chess engine maintained by [NotKaede-11](https://github.com/NotKaede-11). Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
 
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
