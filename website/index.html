@@ -52,7 +52,7 @@
   <header class="site-header">
     <a class="wordmark" href="#" aria-label="Coco Chess Engine home"><img src="assets/coco-hat.png" width="46" height="41" alt=""><span>Coco<span class="wordmark-sub">Chess Engine</span></span></a>
     <nav aria-label="Main navigation">
-      <a href="#inside">About Coco</a><a href="https://github.com/NotKaede-11/Coco-Engine">GitHub</a>
+      <a href="#engine">The engine</a><a href="#inside">About Coco</a>
       <a class="nav-download" href="#download">Download <svg class="arrow" aria-hidden="true" viewBox="0 0 16 16"><path d="M3 13 13 3M3 3h10v10"/></svg></a>
     </nav>
   </header>
@@ -66,20 +66,8 @@
         <p class="hero-description">A free, open-source UCI chess engine with neural-network evaluation. Made for curious players, engine testers, and the next move.</p>
         <div class="hero-actions"><a id="hero-download" class="button button-light" href="#download">Download Coco 1.5.0 <svg class="arrow" aria-hidden="true" viewBox="0 0 16 16"><path d="M3 13 13 3M3 3h10v10"/></svg></a><a class="text-link" href="https://github.com/NotKaede-11/Coco-Engine">Explore the source</a></div>
         <p class="hero-footnote">Windows, Linux &amp; macOS <span aria-hidden="true">·</span> GPL-3.0</p>
-      </div>
-      <svg class="hero-ornament" viewBox="0 0 1200 620" preserveAspectRatio="none" aria-hidden="true">
-        <path class="draw-line" pathLength="1" d="M30 130V30h260m620 0h260v100M30 490v100h260m620 0h260V490"/>
-        <path class="inner-line" d="M40 100V40h170m780 0h170v60M40 520v60h170m780 0h170v-60"/>
-      </svg>
-      <svg class="hero-sigil sigil-left" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
-      <svg class="hero-sigil sigil-right" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
-    </section>
-
-    <section class="download section-wrap" id="download" aria-labelledby="download-title">
-      <div class="download-heading">
-        <h2 id="download-title">Download Coco 1.5.0</h2>
-        <p>Free for Windows, macOS, and Linux. The neural network is included.</p>
-      </div>
+        <details class="download-options" id="download">
+          <summary>Other systems &amp; builds</summary>
       <div class="download-panel">
         <div id="download-controls" hidden>
           <div class="platform-fields">
@@ -93,11 +81,32 @@
         <p class="gui-note">Coco runs inside a chess GUI. <a href="https://github.com/NotKaede-11/Coco-Engine#quick-start">Setup guide</a></p>
       </div>
       <div class="download-resources"><a href="https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0">All builds &amp; release results</a><a href="https://github.com/NotKaede-11/Coco-Engine#choose-the-right-binary">Build compatibility guide</a></div>
+        </details>
+      </div>
+      <svg class="hero-ornament" viewBox="0 0 1200 620" preserveAspectRatio="none" aria-hidden="true">
+        <path class="draw-line" pathLength="1" d="M30 130V30h260m620 0h260v100M30 490v100h260m620 0h260V490"/>
+        <path class="inner-line" d="M40 100V40h170m780 0h170v60M40 520v60h170m780 0h170v-60"/>
+      </svg>
+      <svg class="hero-sigil sigil-left" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
+      <svg class="hero-sigil sigil-right" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
+    </section>
+
+    <section class="engine-story section-wrap" id="engine" aria-labelledby="engine-title">
+      <div class="engine-heading"><h2 id="engine-title">What goes into <br>a move.</h2><p>Coco combines a neural evaluation of the board with a search through possible continuations.</p></div>
+      <dl class="engine-facts">
+        <div><dt>Neural evaluation</dt><dd>A 512-unit NNUE evaluates positions and updates as pieces move. It is embedded in every release, so no separate network download is needed.</dd></div>
+        <div><dt>Parallel search</dt><dd>Lazy SMP lets multiple workers explore the game tree while sharing search results. Move ordering helps Coco examine promising continuations first.</dd></div>
+        <div><dt>Analysis &amp; endgames</dt><dd>MultiPV lets your chess GUI display several candidate lines. With optional Syzygy tablebases, Coco can probe supported endgame positions.</dd></div>
+      </dl>
+    </section>
+
+    <section class="release-band" aria-labelledby="release-title">
+      <div class="section-wrap release-content"><h2 id="release-title">Inside version 1.5.</h2><div><p>This release focuses on search, correctness, and compatibility. It adds explicit analysis-line storage, root-aware time allocation, and improved coordination between search workers, while retaining the existing neural network.</p><a href="https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0">Explore the changes &amp; test results</a></div></div>
     </section>
 
     <section class="intro section-wrap" id="inside" aria-labelledby="inside-title">
       <h2 id="inside-title">A little about Coco.</h2>
-      <div class="intro-body"><p><strong>Coco Chess Engine</strong> is an open-source C++20 UCI engine maintained by <a href="https://github.com/NotKaede-11">NotKaede-11</a>. It combines NNUE evaluation with multithreaded search and optional Syzygy tablebases.</p><p>Named after Coco from <em>Witch Hat Atelier</em>, and built with the same spirit of curiosity. Coco Chess Engine and CuckooChess are different projects.</p></div>
+      <div class="intro-body"><p><strong>Coco Chess Engine</strong> is an open-source C++20 UCI engine maintained by <a href="https://github.com/NotKaede-11">NotKaede-11</a>. Its source is available to study, build, and contribute to under the GPL-3.0 license.</p><p>Named after Coco from <em>Witch Hat Atelier</em>, and built with the same spirit of curiosity. Coco Chess Engine and CuckooChess are different projects.</p></div>
     </section>
   </main>
 

@@ -95,9 +95,14 @@ unaffiliated with Witch Hat Atelier's creators or publishers.
 
 ## Content scope
 
-The homepage keeps project identity, a download area, a short introduction, and
-source/support links. Detailed gauntlet tables, repeated feature explanations,
-FAQ repetitions, and the terminal tutorial were removed at the user's request.
-Release results and setup details remain one link away. The current Gloock/Amiri
-typography is provisional: the user is gathering references for a more magical
-lettering style. Do not treat those fonts as approved.
+The hero provides the OS-aware primary download. A native, initially collapsed
+Other systems & builds disclosure preserves manual selection and the setup guide.
+Navigation and unknown-device download actions reveal that chooser.
+
+The body explains neural evaluation, parallel search, analysis and endgames,
+followed by a short 1.5 release summary and project background. The information
+comes from the 1.5 release notes. Detailed match tables and the terminal tutorial
+stay in linked documentation rather than repeating on the homepage.
+
+Gloock/Amiri typography remains provisional while the user gathers a preferred
+magical-lettering reference. Do not treat those fonts as approved.

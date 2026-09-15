@@ -46,6 +46,8 @@ def main():
     assert 'CuckooChess are different projects' in text
     assert 'download-link' in page.ids and 'download-platform' in page.ids
     assert 'copy-commands' not in page.ids and 'results' not in page.ids
+    assert 'engine' in page.ids
+    assert any(tag == 'details' and a.get('id') == 'download' and 'open' not in a for tag, a in page.tags)
     assert any(tag == 'script' and a.get('type') == 'module' for tag, a in page.tags)
     links = 0
     for tag, attrs in page.tags:

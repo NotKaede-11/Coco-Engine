@@ -46,3 +46,10 @@ choosePlatform(true);
 controls.hidden = false;
 osSelect.addEventListener('change', () => choosePlatform(false));
 processorSelect.addEventListener('change', updateDownload);
+
+// An unknown-device hero button and the navigation link reveal the native chooser.
+for (const link of document.querySelectorAll('a[href="#download"], #hero-download')) {
+  link.addEventListener('click', () => {
+    if (link.getAttribute('href') === '#download') document.querySelector('#download').open = true;
+  });
+}
