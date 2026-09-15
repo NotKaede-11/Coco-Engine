@@ -68,16 +68,17 @@ def main():
     for asset in re.findall(r'url\([\"\']?([^\"\')]+)', css):
         assert (SITE / asset).is_file(), asset
     assert 'prefers-reduced-motion' in css and ':focus-visible' in css
-    assert (SITE / 'assets/alegreya-latin.woff2').read_bytes()[:4] == b'wOF2'
-    image = (SITE / 'assets/coco-atelier.webp').read_bytes()
-    assert image[:4] == b'RIFF' and image[8:12] == b'WEBP'
-    assert len(image) < 750_000, 'Keep hero image practical for mobile'
+    for font in ('amiri-latin.woff2', 'gloock-latin.woff2'):
+        assert (SITE / 'assets' / font).read_bytes()[:4] == b'wOF2'
+    assert (SITE / 'assets/coco-hat.png').read_bytes()[:8] == bytes([137,80,78,71,13,10,26,10])
     sitemap = ET.parse(SITE / 'sitemap.xml')
     assert [x.text for x in sitemap.findall('.//{*}loc')] == [CANONICAL]
     robots = (SITE / 'robots.txt').read_text()
     assert 'Allow: /' in robots and CANONICAL + 'sitemap.xml' in robots
     provenance = json.loads((SITE / 'assets/provenance.json').read_text())
-    assert provenance['coco-atelier.webp']['prompt']
+    assert provenance['coco-hat.png']['source'] == 'assets/logo.png in this repository'
+    assert not (SITE / 'assets/coco-atelier.webp').exists()
+    assert 'hero-art' not in text and 'AI-generated fan artwork' not in text
     for path in SITE.rglob('*'):
         if not path.is_file():
             continue

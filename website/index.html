@@ -16,8 +16,8 @@
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Coco Chess Engine — Free NNUE UCI Engine">
   <meta name="twitter:description" content="A free C++20 chess engine with embedded NNUE evaluation, Lazy SMP, and cross-platform downloads.">
-  <link rel="icon" href="assets/hat.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/alegreya-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="assets/coco-hat.png" type="image/png">
+  <link rel="preload" href="assets/gloock-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
   <script type="application/ld+json">
   {
@@ -42,15 +42,15 @@
   <script src="site.js" defer></script>
 </head>
 <body>
-  <!-- THESIS: Coco's illustrated atelier introduces a real chess engine through wonder and clear downloads.
-  OWN-WORLD: Forest ink, ivory paper, moss, antique gold; literary Alegreya and plain UI text.
-  STORY: Recognize Coco, understand NNUE/search, inspect honest evidence, install a release.
-  FIRST VIEWPORT: Compact navigation above a forest-green introduction and full-height landscape with Coco studying chess; download action on the left.
-  FORM: User-pinned Witch Hat Atelier world; illustrated atelier prospectus; seed b169e113, brief takes precedence.
-  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance. -->
+  <!-- THESIS: A typographic spellbook introduces Coco through its creator's own hat and clear downloads.
+  OWN-WORLD: Ivory, forest ink, antique gold; Gloock display lettering and Amiri prose, referenced from the official Witch Hat Atelier website.
+  STORY: Recognize Coco, understand the engine, inspect evidence, download a release.
+  FIRST VIEWPORT: Centered original hat, title, literary motto and download action enclosed by a briefly drawn geometric frame. No generated illustration.
+  FORM: User-directed revision of the atelier page: text, original logo and restrained line animation.
+  FINISH: Reviewed on desktop and mobile; design recorded; original-asset provenance preserved. -->
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="wordmark" href="#" aria-label="Coco Chess Engine home"><img src="assets/hat.svg" width="38" height="38" alt=""><span>Coco<span class="wordmark-sub">Chess Engine</span></span></a>
+    <a class="wordmark" href="#" aria-label="Coco Chess Engine home"><img src="assets/coco-hat.png" width="46" height="41" alt=""><span>Coco<span class="wordmark-sub">Chess Engine</span></span></a>
     <nav aria-label="Main navigation">
       <a href="#inside">The engine</a><a href="#results">Results</a><a href="#questions">FAQ</a>
       <a class="nav-download" href="#download">Download <svg class="arrow" aria-hidden="true" viewBox="0 0 16 16"><path d="M3 13 13 3M3 3h10v10"/></svg></a>
@@ -60,17 +60,23 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
+        <img class="hero-emblem" src="assets/coco-hat.png" width="92" height="82" alt="Coco’s original turquoise and gold witch-hat logo">
         <h1 id="hero-title">Coco<span>Chess Engine</span></h1>
-        <p class="hero-motto">A little wonder.<br>A deeper game.</p>
+        <p class="hero-motto">A little wonder. <br>A deeper game.</p>
         <p class="hero-description">A free, open-source UCI chess engine with neural-network evaluation. Made for curious players, engine testers, and the next move.</p>
         <div class="hero-actions"><a class="button button-light" href="#download">Download Coco 1.5.0 <svg class="arrow" aria-hidden="true" viewBox="0 0 16 16"><path d="M3 13 13 3M3 3h10v10"/></svg></a><a class="text-link" href="https://github.com/NotKaede-11/Coco-Engine">Explore the source</a></div>
         <p class="hero-footnote">Windows, Linux &amp; macOS <span aria-hidden="true">·</span> GPL-3.0</p>
       </div>
-      <figure class="hero-art"><img src="assets/coco-atelier.webp" width="1536" height="1024" fetchpriority="high" alt="An original fan illustration of Coco, a blonde apprentice witch in a broad pointed hat, considering a chessboard in an atelier garden."><figcaption>Curiosity is a good place to begin.</figcaption></figure>
+      <svg class="hero-ornament" viewBox="0 0 1200 620" preserveAspectRatio="none" aria-hidden="true">
+        <path class="draw-line" pathLength="1" d="M30 130V30h260m620 0h260v100M30 490v100h260m620 0h260V490"/>
+        <path class="inner-line" d="M40 100V40h170m780 0h170v60M40 520v60h170m780 0h170v-60"/>
+      </svg>
+      <svg class="hero-sigil sigil-left" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
+      <svg class="hero-sigil sigil-right" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="82"/><circle cx="100" cy="100" r="72"/><path d="M100 5v30m0 130v30M5 100h30m130 0h30M42 42l20 20m76 76 20 20M42 158l20-20m76-76 20-20"/><path d="m100 55 45 45-45 45-45-45z"/></svg>
     </section>
 
     <section class="intro section-wrap" id="inside" aria-labelledby="inside-title">
-      <div class="intro-heading"><svg class="seal" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54"/><circle cx="60" cy="60" r="46"/><path d="M60 9v13m0 76v13M9 60h13m76 0h13M24 24l10 10m52 52 10 10M24 96l10-10m52-52 10-10"/><path d="M43 82h34l-5-9H48zm8-15h18l-3-21H54zM60 30v16m-7-9h14"/></svg><h2 id="inside-title">Curiosity at heart.<br>Calculation underneath.</h2></div>
+      <div class="intro-heading"><img class="seal" src="assets/coco-hat.png" width="72" height="64" alt=""><h2 id="inside-title">Curiosity at heart.<br>Calculation underneath.</h2></div>
       <div class="intro-body"><p><strong>Coco Chess Engine</strong> is a C++20 project maintained by <a href="https://github.com/NotKaede-11">NotKaede-11</a>. Behind the pointed hat is an alpha-beta search, a compact neural evaluator, and a shared ambition: keep finding better moves.</p><p>The name comes from Coco in <a href="https://tongari-anime.com/en/">Witch Hat Atelier</a>. Her curiosity gives the project its name and this page its atmosphere. The engine is its own open-source project.</p></div>
     </section>
 
@@ -109,11 +115,11 @@ go movetime 1000</code></pre><p>Start the executable first. Wait for <code>bestm
         <details><summary>Do I need to download a neural network?</summary><p>No. Published Coco binaries include the network. Advanced users can load a compatible external network through the EvalFile option; arbitrary NNUE files from other engines are not interchangeable.</p></details>
         <details><summary>Can I play chess on this website?</summary><p>This is Coco’s project and download page. To play against the engine, install it in a UCI-compatible chess GUI. You can also visit the <a href="https://lichess.org/@/Coco_Engine">Coco_Engine profile on Lichess</a>.</p></details>
         <details><summary>How strong is Coco?</summary><p>Coco 1.5.0 has an approximate 2,977 Elo estimate from a filtered local gauntlet calibration. It is not an official CCRL rating, and performance depends on hardware, time control, and opponents. Read the <a href="https://github.com/NotKaede-11/Coco-Engine/blob/main/docs/evidence/v1.5.0-gauntlet.md">full results and methodology</a> for context.</p></details>
-        <details><summary>Is this an official Witch Hat Atelier project?</summary><p>No. Coco Chess Engine is an unaffiliated open-source chess project. Its name and visual inspiration come from Coco in Witch Hat Atelier by Kamome Shirahama. The illustration on this page is original AI-generated fan artwork, not official series artwork.</p></details>
+        <details><summary>Is this an official Witch Hat Atelier project?</summary><p>No. Coco Chess Engine is an unaffiliated open-source chess project. Its name and visual inspiration come from Coco in Witch Hat Atelier by Kamome Shirahama.</p></details>
       </div>
     </section>
   </main>
 
-  <footer class="site-footer"><div class="footer-main"><a class="wordmark" href="#"><img src="assets/hat.svg" width="38" height="38" alt=""><span>Coco<span class="wordmark-sub">Chess Engine</span></span></a><p>Stay curious. Keep calculating.</p><div class="footer-links"><a href="https://github.com/NotKaede-11/Coco-Engine">GitHub</a><a href="https://github.com/NotKaede-11/Coco-Engine/issues">Report an issue</a><a href="https://lichess.org/@/Coco_Engine">Lichess</a></div></div><div class="footer-fine"><span>Free &amp; open source under <a href="https://github.com/NotKaede-11/Coco-Engine/blob/main/LICENSE">GPL-3.0</a>.</span><span>A chess project inspired by Witch Hat Atelier. Unaffiliated with its creators or publishers.</span></div></footer>
+  <footer class="site-footer"><div class="footer-main"><a class="wordmark" href="#"><img src="assets/coco-hat.png" width="46" height="41" alt=""><span>Coco<span class="wordmark-sub">Chess Engine</span></span></a><p>Stay curious. Keep calculating.</p><div class="footer-links"><a href="https://github.com/NotKaede-11/Coco-Engine">GitHub</a><a href="https://github.com/NotKaede-11/Coco-Engine/issues">Report an issue</a><a href="https://lichess.org/@/Coco_Engine">Lichess</a></div></div><div class="footer-fine"><span>Free &amp; open source under <a href="https://github.com/NotKaede-11/Coco-Engine/blob/main/LICENSE">GPL-3.0</a>.</span><span>A chess project inspired by Witch Hat Atelier. Unaffiliated with its creators or publishers.</span></div></footer>
 </body>
 </html>

@@ -67,15 +67,22 @@ Do not replace the local estimate with an official-rating claim without its
 corresponding published source. Existing releases and engine binaries are
 unaffected by website-only changes.
 
-## Visual assets
+## Visual assets and typography
 
-The hat favicon is a vector interpretation of Coco's existing pointed-hat
-identity. The hero is original AI-generated fan artwork made for this page,
-inspired by Coco and the world of Witch Hat Atelier. It is not official series
-artwork. The original series and its characters belong to their respective
-rights holders; this project claims no affiliation.
+The homepage uses the creator's existing turquoise-and-gold hat from
+`assets/logo.png`. The website copy is cropped to remove surrounding whitespace;
+the original remains unchanged. The favicon, navigation, and page emblems all
+use this same drawing. There is no AI-generated illustration on the page.
 
-The illustration reference was the [official series website](https://tongari-anime.com/en/).
-Asset provenance and the generation prompt are in `website/assets/provenance.json`.
-The self-hosted Alegreya font is distributed under the SIL Open Font License;
-the license is included in `website/assets/OFL-Alegreya.txt`.
+The [official Witch Hat Atelier website](https://tongari-anime.com/en/) was
+inspected for typography: its styles load Amiri and Gloock, among other fonts,
+and its English prose uses Amiri. This homepage uses Gloock for display headings
+and Amiri for prose, with plain sans-serif navigation. It does not copy the
+series' title artwork or claim an official series typeface.
+
+Both fonts are self-hosted under the included SIL Open Font Licenses.
+Asset origins are recorded in `website/assets/provenance.json`.
+
+The hero's authored geometric lines draw once over 2.8 seconds. Text is always
+visible, and reduced-motion preferences disable the animation. The project is
+unaffiliated with Witch Hat Atelier's creators or publishers.

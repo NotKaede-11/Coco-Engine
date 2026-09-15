@@ -1,17 +1,15 @@
 {
-  "coco-atelier.webp": {
-    "kind": "Original AI-generated fan illustration",
-    "generator": "OpenAI image generation",
-    "created": "2026-09-15",
-    "reference": "https://tongari-anime.com/en/",
-    "affiliation": "Unofficial fan artwork inspired by Coco and Witch Hat Atelier. No affiliation with the series.",
-    "prompt": "Create an original illustrated hero artwork for the free open-source Coco Chess Engine homepage. Use case: illustration-story. Landscape 1536x1024 or similar 3:2. This is fan artwork of Coco from Witch Hat Atelier, not a screenshot, manga panel, official key visual, or artist imitation. Coco is a young blonde apprentice witch with warm green eyes, short bobbed blonde hair with a tiny braid, enormous ivory pointed witch hat with green ribbon/detail and a sage-green traveling cape over an ivory outfit, fully clothed, curious thoughtful expression. Show her seated on the RIGHT HALF at a stone garden table studying a small wooden chessboard with convincing recognizable ivory and dark chess pieces. A quill and closed field notebook lie nearby. Her hands natural, one resting at chin or table. Behind her, an enchanting pastoral atelier landscape with rolling green hills, a little stone and timber workshop with steep roof, tall leafy trees framing the top corners, distant towers and cloudy pale sky. Rich hand-painted gouache and delicate clean ink contours, storybook illustration, natural detailed anatomy, richly layered foliage, very high craft. Colors deep forest green, moss, warm ivory, muted jade, restrained antique gold, late afternoon sunlight. Composition is an immersive landscape, character and chessboard clearly visible on right-middle, left is mostly landscape and darker leaves. Full-bleed artwork, NO typography, NO letters, NO logos, NO watermark, NO border, NO website UI. Do not draw magical symbols replacing chess pieces. Image is a complete illustration to be cropped responsively beside website HTML text."
+  "coco-hat.png": {
+    "kind": "Existing user-created logo",
+    "source": "assets/logo.png in this repository",
+    "processing": "Cropped only: 230x205 at offset 205,70. Original source unchanged. No generated artwork."
   },
-  "alegreya-latin.woff2": {
-    "source": "https://fonts.gstatic.com/s/alegreya/v41/4UaBrEBBsBhlBjvfkSLhx6g.woff2",
-    "license": "SIL Open Font License 1.1; see OFL-Alegreya.txt"
+  "amiri-latin.woff2": {
+    "source": "https://fonts.gstatic.com/s/amiri/v30/J7aRnpd8CGxBHpUutLM.woff2",
+    "license": "OFL-Amiri.txt"
   },
-  "hat.svg": {
-    "kind": "Project-created vector based on the existing Coco pointed-hat identity"
+  "gloock-latin.woff2": {
+    "source": "https://fonts.gstatic.com/s/gloock/v8/Iurb6YFw84WUY4NJiBak.woff2",
+    "license": "OFL-Gloock.txt"
   }
 }
