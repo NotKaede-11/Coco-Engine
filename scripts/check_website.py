@@ -43,8 +43,10 @@ def main():
     assert metadata['downloadUrl'].endswith('/v' + release['version'])
     assert metadata['offers']['price'] == '0'
     assert 'aggregateRating' not in metadata, 'Do not misrepresent Elo as a review rating'
-    assert 'not an official CCRL rating' in text
     assert 'CuckooChess are different projects' in text
+    assert 'download-link' in page.ids and 'download-platform' in page.ids
+    assert 'copy-commands' not in page.ids and 'results' not in page.ids
+    assert any(tag == 'script' and a.get('type') == 'module' for tag, a in page.tags)
     links = 0
     for tag, attrs in page.tags:
         if tag == 'img':
@@ -83,7 +85,7 @@ def main():
         if not path.is_file():
             continue
         assert path.suffix.lower() not in ('.exe', '.nnue', '.sqlite', '.pgn', '.env'), path
-        if path.suffix in ('.html', '.css', '.js', '.json', '.txt', '.xml', '.svg'):
+        if path.suffix in ('.html', '.css', '.js', '.mjs', '.json', '.txt', '.xml', '.svg'):
             content = path.read_text(encoding='utf-8')
             assert not re.search(r'[A-Za-z]:[\\/](?:Users|home)[\\/]|/' + r'home/[^/\s]+/', content), path
     print(f'Homepage checks passed: release {release["version"]}, {links} local links/assets, metadata, sitemap, accessibility hooks, provenance, and public-file boundaries.')

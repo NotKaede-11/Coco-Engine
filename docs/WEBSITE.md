@@ -10,12 +10,18 @@ networks, private notes, and analysis outputs are not part of the Pages artifact
 ```sh
 python -m http.server 8765 --directory website
 python scripts/check_website.py
+node --test scripts/test_website_download.mjs
 ```
 
 Open http://localhost:8765/. No build, package installation, external font
-request, analytics service, or client-side rendering is required. The FAQ and
-download links work without JavaScript. JavaScript only adds a copy button
-when the Clipboard API is available in a secure context.
+request, analytics service, or client-side rendering is required. The main download link works without JavaScript. JavaScript preselects the
+operating system and a conservative build when the browser supplies useful
+processor clues. All decisions stay in the browser; no detection data is sent
+to a server. Platform and processor choices remain editable. macOS always asks
+for Apple Silicon or Intel because an Intel-looking browser identifier is not
+reliable hardware evidence. Mobile, ChromeOS, unknown, and unsupported combinations
+fall back to the release downloads. CPU instruction support is not detected;
+x86-64 choices require POPCNT and do not assume AVX support.
 
 ## First publication
 
@@ -34,12 +40,12 @@ deployment and HTTP check.
 - The HTML contains a project-specific title, description, canonical URL,
   social text metadata, and SoftwareApplication JSON-LD matching visible facts.
 - Names consistently identify **Coco Chess Engine**, its maintainer, source
-  repository, and current release. A visible FAQ distinguishes CuckooChess.
+  repository, and current release. The brief project introduction distinguishes CuckooChess.
 - `sitemap.xml` contains only the canonical homepage. Submit its URL through
   Google Search Console and Bing Webmaster Tools after verifying ownership.
   Submission helps discovery; it does not guarantee indexing or AI citations.
 - HTML permits indexing and link following. Important content is available
-  without JavaScript, and FAQ answers are present in the initial HTML.
+  without JavaScript.
 - **robots.txt is scoped to the host root.** At a project URL such as
   `/Coco-Engine/`, the authoritative file is
   `https://notkaede-11.github.io/robots.txt`, not
@@ -86,3 +92,12 @@ Asset origins are recorded in `website/assets/provenance.json`.
 The hero's authored geometric lines draw once over 2.8 seconds. Text is always
 visible, and reduced-motion preferences disable the animation. The project is
 unaffiliated with Witch Hat Atelier's creators or publishers.
+
+## Content scope
+
+The homepage keeps project identity, a download area, a short introduction, and
+source/support links. Detailed gauntlet tables, repeated feature explanations,
+FAQ repetitions, and the terminal tutorial were removed at the user's request.
+Release results and setup details remain one link away. The current Gloock/Amiri
+typography is provisional: the user is gathering references for a more magical
+lettering style. Do not treat those fonts as approved.
