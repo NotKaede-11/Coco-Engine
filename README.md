@@ -9,7 +9,7 @@
 
   **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
 
-  [![Prepared hotfix: v1.5.1][release-badge]][release-link]
+  [![Release: v1.5.1][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
@@ -26,7 +26,7 @@
 
 ## Coco 1.5.1
 
-**Coco 1.5.1** is a compatibility hotfix prepared from official v1.5.0. It starts
+**Coco 1.5.1** is a compatibility hotfix based on official v1.5.0. It starts
 with its embedded network even when older Coco versions share the same folder.
 `EvalFile` defaults to `<embedded>`; external networks require an explicit path.
 An invalid external-file request warns and retains the active weights.
@@ -201,7 +201,7 @@ Bug reports, test games, code review, and constructive feedback are welcome thro
 
 Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
 
-[release-badge]: https://img.shields.io/badge/prepared-v1.5.1-yellow?style=flat-square
+[release-badge]: https://img.shields.io/badge/release-v1.5.1-blue?style=flat-square
 [release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.1
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE

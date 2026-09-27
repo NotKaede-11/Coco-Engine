@@ -2,7 +2,7 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
-## [1.5.1] — Unreleased
+## [1.5.1] — 2026-09-27
 
 ### Fixed
 
