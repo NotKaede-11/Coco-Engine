@@ -49,7 +49,7 @@ quit
     for option in ("SyzygyProbeLimit type check default true", "Syzygy50MoveRule type check default true",
                    "UCI_ShowWDL type check default false", "UCI_AnalyseMode type check default false",
                    "Move Overhead type spin default 30 min 0 max 5000",
-                   "EvalFile type string default coco.nnue"):
+                   "EvalFile type string default <embedded>"):
         assert "option name " + option in options, options
     assert "info string Debug mode on" in lines, result.stdout
     assert any("loaded" in line.lower() and ("network" in line.lower() or "nnue" in line.lower())

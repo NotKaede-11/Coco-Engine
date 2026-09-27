@@ -171,6 +171,7 @@ jobs:
         if: matrix.validate
         run: |
           python3 testing/verify_build_identity.py ./coco-chess --arch ${{ matrix.arch }}
+          python3 testing/nnue_loading_test.py ./coco-chess
           python3 testing/validate_options.py ./coco-chess
           python3 testing/verify_uci_limits.py ./coco-chess
           python3 testing/verify_fixed_signature.py ./coco-chess

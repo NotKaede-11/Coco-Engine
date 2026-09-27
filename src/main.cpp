@@ -57,10 +57,10 @@ int main(int argc, char* argv[]) {
     init_all_attack_tables();
     Search::init_search_tables();
     
-    // Load NNUE weights from file
-    if (!g_nnue.load_network("coco.nnue")) {
-        std::cerr << "Error: Could not load NNUE weights file 'coco.nnue'." << std::endl;
-        std::cerr << "Please ensure 'coco.nnue' is located in the working directory or next to the executable." << std::endl;
+    // Default play always uses this executable's embedded network. External
+    // networks are loaded only by an explicit EvalFile request.
+    if (!g_nnue.load_network("<embedded>")) {
+        std::cerr << "Error: Embedded NNUE network does not match this build." << std::endl;
         return 1;
     }
 

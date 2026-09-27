@@ -2,6 +2,19 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [1.5.1] — Unreleased
+
+### Fixed
+
+- Prevent older or incompatible `coco.nnue` files in shared engine folders from blocking startup: use the embedded network by default.
+- Preserve active weights when an explicitly selected external network cannot be loaded completely.
+
+### Changed
+
+- Set the UCI `EvalFile` default to `<embedded>` and support restoring the built-in network explicitly.
+- Update the UCI engine identity to `Coco v1.5.1`.
+- Keep official v1.5.0 search and network weights unchanged; no experimental 1.6 features are included.
+
 ## [1.5.0] — 2026-09-14
 
 ### Added

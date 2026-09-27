@@ -42,6 +42,8 @@ jobs:
         run: python testing/verify_fixed_signature.py ./coco-chess
       - name: Verify UCI options
         run: python testing/validate_options.py ./coco-chess
+      - name: Verify standalone startup and NNUE reload
+        run: python testing/nnue_loading_test.py ./coco-chess
       - name: Verify UCI search limits
         run: python testing/verify_uci_limits.py ./coco-chess
       - name: Verify UCI lifecycle and malformed-input handling
@@ -109,6 +111,8 @@ jobs:
         shell: pwsh
         run: |
           python testing/verify_build_identity.py .\coco-chess.exe --arch native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python testing/nnue_loading_test.py .\coco-chess.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python testing/validate_options.py .\coco-chess.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

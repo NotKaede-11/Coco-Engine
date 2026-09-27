@@ -1,19 +1,19 @@
 {
-  "version": "1.5.0",
-  "engine_name": "Coco v1.5.0",
-  "status": "released",
-  "release_ready": true,
+  "version": "1.5.1",
+  "engine_name": "Coco v1.5.1",
+  "status": "prepared",
+  "release_ready": false,
   "readiness_checks": {
     "sprt_log_reviewed": true,
     "gauntlet_completed_and_reviewed": true,
     "historical_opponent_provenance_reviewed": true,
-    "release_platform_checks_passed": true
+    "release_platform_checks_passed": false
   },
   "nnue_l1_size": 512,
   "nnue_bytes": 789508,
   "nnue_sha256": "392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055",
   "fixed_signature_nodes": 477035,
-  "notes": "docs/releases/v1.5.0.md",
+  "notes": "docs/releases/v1.5.1.md",
   "artifacts": [
     "coco-chess-windows-x86-64-popcnt.exe",
     "coco-chess-windows-x86-64-avx2.exe",

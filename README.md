@@ -9,7 +9,7 @@
 
   **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
 
-  [![Stable release: v1.5.0][release-badge]][release-link]
+  [![Prepared hotfix: v1.5.1][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
 
@@ -24,13 +24,20 @@
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
 
-## Coco 1.5.0
+## Coco 1.5.1
 
-**Coco 1.5.0** combines a rebuilt search and board-state foundation with guarded capture ProbCut, explicit principal variations, root-aware time allocation and parallel best-move voting. It retains the existing 512-unit NNUE. The retained SPRT console log records a 1,092-game SPRT pass against the pre-release at `10+0.1`, Threads=1 and Hash=16.
+**Coco 1.5.1** is a compatibility hotfix prepared from official v1.5.0. It starts
+with its embedded network even when older Coco versions share the same folder.
+`EvalFile` defaults to `<embedded>`; external networks require an explicit path.
+An invalid external-file request warns and retains the active weights.
+
+Search and the 512-unit network are unchanged from v1.5.0. Experimental 1.6
+changes are not included. The following strength evidence belongs to v1.5.0,
+not a new hotfix strength test.
 
 **Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations.
 
-See the [release notes](docs/releases/v1.5.0.md) and [release checklist](docs/RELEASING.md).
+See the [hotfix notes](docs/releases/v1.5.1.md) and [release checklist](docs/RELEASING.md).
 
 ## Quick start
 
@@ -106,7 +113,7 @@ Development matches may give both engines the same external opening suite. This 
 
 ## UCI configuration
 
-The release build identifies as `Coco v1.5.0` and exposes these fifteen options to chess GUIs:
+The release build identifies as `Coco v1.5.1` and exposes these fifteen options to chess GUIs:
 
 | Option | Default | Purpose |
 |:--|--:|:--|
@@ -117,7 +124,7 @@ The release build identifies as `Coco v1.5.0` and exposes these fifteen options 
 | `MultiPV` | 1 | Number of principal variations to report |
 | `Move Overhead` | 30 ms | Safety allowance for GUI and operating-system latency |
 | `Use PEXT` | hardware dependent | Use the BMI2 sliding-attack backend when supported |
-| `EvalFile` | `coco.nnue` | Load a compatible external network |
+| `EvalFile` | `<embedded>` | Use built-in weights; set an explicit file path to load a compatible external network |
 | `SyzygyPath` | empty | Path to Syzygy tablebase files |
 | `SyzygyProbeDepth` | 1 | Depth threshold for probing positions at the largest loaded tablebase size |
 | `SyzygyProbeLimit` | true | Apply that depth threshold at the largest loaded tablebase size |
@@ -128,7 +135,7 @@ The release build identifies as `Coco v1.5.0` and exposes these fifteen options 
 
 Eight internal search options remain accepted through `setoption`, but are hidden from GUI discovery: `RFP_Margin`, `LMR_Constant_Scaled`, `NMP_Base`, `NMP_Divisor`, `Aspiration_Delta`, `History_Threshold`, `LMR_History_Divisor`, and `SEE_Pruning_Depth`.
 
-The network is 789,508 bytes with SHA-256 `392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055`. A compatible external `coco.nnue` may override the embedded net. Use the `info string build` diagnostic to verify the active network when comparing results.
+The network is 789,508 bytes with SHA-256 `392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055`. Files beside the executable do not override the embedded net automatically. Select an external network explicitly using `EvalFile`; use a unique filename such as `coco-512x2-392be46c8e06.nnue` to avoid collisions. Set `<embedded>` to restore the built-in weights. Failed explicit loads preserve the current network. Use the `info string build` diagnostic to verify the active network when comparing results.
 
 ## Build from source
 
@@ -194,8 +201,8 @@ Bug reports, test games, code review, and constructive feedback are welcome thro
 
 Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
 
-[release-badge]: https://img.shields.io/badge/release-v1.5.0-brightgreen?style=flat-square
-[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0
+[release-badge]: https://img.shields.io/badge/prepared-v1.5.1-yellow?style=flat-square
+[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.1
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE
 [cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus

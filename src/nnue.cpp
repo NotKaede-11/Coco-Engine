@@ -1,6 +1,7 @@
 #include "nnue.h"
 #include <iostream>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <algorithm>
 #include <cmath>
@@ -47,24 +48,6 @@ static std::string fnv1a64_identity(const uint8_t* data, size_t size) {
     return out.str();
 }
 
-static bool fingerprint_file(FILE* file, std::string& identity) {
-    if (fseek(file, 0, SEEK_SET) != 0) return false;
-    uint64_t hash = 14695981039346656037ULL;
-    uint8_t buffer[16384];
-    size_t count = 0;
-    while ((count = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        for (size_t i = 0; i < count; ++i) {
-            hash ^= buffer[i];
-            hash *= 1099511628211ULL;
-        }
-    }
-    if (ferror(file)) return false;
-    std::ostringstream out;
-    out << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << hash;
-    identity = out.str();
-    return fseek(file, 0, SEEK_SET) == 0;
-}
-
 NNUEEvaluator::NNUEEvaluator() {
     // Zero-initialize weights and biases
     for (int i = 0; i < 768; ++i) {
@@ -85,73 +68,46 @@ NNUEEvaluator::NNUEEvaluator() {
 }
 
 bool NNUEEvaluator::load_network(const std::string& filename) {
+    constexpr size_t expected_size = (768 * L1_SIZE + L1_SIZE + 2 * L1_SIZE) * sizeof(int16_t) + sizeof(int32_t);
+    if (filename == "<embedded>") {
+        if (sizeof(raw_nnue_data) != expected_size) return false;
+        load_embedded_network();
+        return true;
+    }
+
     FILE* f = fopen(filename.c_str(), "rb");
-    if (!f) {
-        if (filename.find_first_of("\\/") == std::string::npos) {
-            std::string alt_path = get_executable_directory() + filename;
-            f = fopen(alt_path.c_str(), "rb");
-        }
-        if (!f) {
-            // Fall back to the embedded coco.nnue weights if the default file is missing
-            if (filename == "coco.nnue") {
-                return true;
-            }
-            return false;
-        }
+    if (!f && filename.find_first_of("\\/") == std::string::npos) {
+        std::string alt_path = get_executable_directory() + filename;
+        f = fopen(alt_path.c_str(), "rb");
     }
+    if (!f) return false;
 
-    // Verify file size matches expected size for L1_SIZE
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    constexpr long expected_size = (768 * L1_SIZE + L1_SIZE + 2 * L1_SIZE) * sizeof(int16_t) + sizeof(int32_t);
-    if (size != expected_size) {
-        fclose(f);
-        return false;
-    }
-    std::string loaded_fingerprint;
-    if (!fingerprint_file(f, loaded_fingerprint)) {
+    if (fseek(f, 0, SEEK_END) != 0 || ftell(f) != static_cast<long>(expected_size)
+        || fseek(f, 0, SEEK_SET) != 0) {
         fclose(f);
         return false;
     }
 
-    // Temporary buffer to hold the raw w1 weights of shape [L1_SIZE][768]
-    auto temp_w1 = std::make_unique<int16_t[]>(L1_SIZE * 768);
-
-    // Read layer 1 weights
-    if (fread(temp_w1.get(), sizeof(int16_t), L1_SIZE * 768, f) != L1_SIZE * 768) {
-        fclose(f);
-        return false;
-    }
-
-    // Transpose layer 1 weights from [L1_SIZE][768] to [768][L1_SIZE] for cache-contiguous lookups
-    for (int i = 0; i < L1_SIZE; ++i) {
-        for (int j = 0; j < 768; ++j) {
-            layer1_weights[j][i] = temp_w1[i * 768 + j];
-        }
-    }
-
-    // Read layer 1 biases
-    if (fread(layer1_biases, sizeof(int16_t), L1_SIZE, f) != L1_SIZE) {
-        fclose(f);
-        return false;
-    }
-
-    // Read layer 2 weights
-    if (fread(layer2_weights, sizeof(int16_t), 2 * L1_SIZE, f) != 2 * L1_SIZE) {
-        fclose(f);
-        return false;
-    }
-
-    // Read layer 2 bias
-    if (fread(&layer2_bias, sizeof(int32_t), 1, f) != 1) {
-        fclose(f);
-        return false;
-    }
-
+    // Read and validate the entire replacement before touching active weights.
+    // A missing, incompatible or unreadable explicit file retains the active net.
+    auto weights = std::make_unique<int16_t[]>(expected_size / sizeof(int16_t));
+    const bool complete = fread(weights.get(), 1, expected_size, f) == expected_size && !ferror(f);
     fclose(f);
-    active_network_fingerprint = loaded_fingerprint;
+    if (!complete) return false;
+    const std::string fingerprint = fnv1a64_identity(
+        reinterpret_cast<const uint8_t*>(weights.get()), expected_size);
+
+    const int16_t* ptr = weights.get();
+    for (int i = 0; i < L1_SIZE; ++i)
+        for (int j = 0; j < 768; ++j)
+            layer1_weights[j][i] = ptr[i * 768 + j];
+    ptr += 768 * L1_SIZE;
+    std::copy_n(ptr, L1_SIZE, layer1_biases);
+    ptr += L1_SIZE;
+    std::copy_n(ptr, 2 * L1_SIZE, layer2_weights);
+    ptr += 2 * L1_SIZE;
+    std::memcpy(&layer2_bias, ptr, sizeof(layer2_bias));
+    active_network_fingerprint = fingerprint;
     active_network_source = filename;
     return true;
 }

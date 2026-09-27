@@ -478,7 +478,7 @@ void uci_loop()
         }
         else if (line == "uci")
         {
-            std::cout << "id name Coco v1.5.0\n";
+            std::cout << "id name Coco v1.5.1\n";
             std::cout << "id author NotKaede-11\n";
             std::cout << "info string build arch=" << COCO_BUILD_ARCH
                       << " isa=" << compiled_isa()
@@ -496,7 +496,7 @@ void uci_loop()
             std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
             std::cout << "option name Use PEXT type check default "
                       << (pext_available() ? "true" : "false") << "\n";
-            std::cout << "option name EvalFile type string default coco.nnue\n";
+            std::cout << "option name EvalFile type string default <embedded>\n";
             std::cout << "option name SyzygyPath type string default <empty>\n";
             std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
             std::cout << "option name SyzygyProbeLimit type check default true\n";
@@ -564,7 +564,7 @@ void uci_loop()
                         std::string current_fen = board.get_fen();
                         if (!g_nnue.load_network(option_value))
                         {
-                            std::cout << "info string Warning: Could not load NNUE weights file '" << option_value << "'.\n";
+                            std::cout << "info string Warning: Could not load NNUE weights file '" << option_value << "'. Keeping the current network.\n";
                         }
                         else
                         {
