@@ -12,6 +12,7 @@
   [![Release: v1.5.1][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
+  [![CCRL 40/15: 2994](https://img.shields.io/badge/CCRL%2040%2F15-2994-blue?style=flat-square)](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)
 
   [Official website](https://notkaede-11.github.io/coco-engine-website/) · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
@@ -19,7 +20,7 @@
 
 ---
 
-**Coco Chess Engine** is a cross-platform C++20 chess engine maintained by [NotKaede-11](https://github.com/NotKaede-11). Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
+**Coco Chess Engine** is a free, open-source, cross-platform UCI chess engine created and maintained by [NotKaede-11](https://github.com/NotKaede-11). Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
 
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
@@ -35,7 +36,7 @@ Search and the 512-unit network are unchanged from v1.5.0. Experimental 1.6
 changes are not included. The following strength evidence belongs to v1.5.0,
 not a new hotfix strength test.
 
-**Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations.
+**Official CCRL 40/15 Rating: 2994 Elo** (+99/−99, 61.5% score over 26 games on the [CCRL 40/15 rating list](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)). In local filtered Ordo calibration at `10+0.1`, Coco scored **52.75% over 4,442 retained games** (~2,977 Elo). The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations.
 
 See the [hotfix notes](docs/releases/v1.5.1.md) and [release checklist](docs/RELEASING.md).
 
@@ -191,7 +192,7 @@ Search tuning requires a runner configured for the hidden internal parameters an
 
 ## Project
 
-Coco is a personal, AI-assisted engine-development project. Ideas are treated as hypotheses: changes are retained through correctness checks, deterministic comparisons, and self-play evidence rather than because another engine uses a similar technique.
+Coco is a personal chess engine created, architected, and maintained by [NotKaede-11](https://github.com/NotKaede-11). Ideas are treated as hypotheses: changes are retained through correctness checks, deterministic comparisons, and self-play evidence rather than because another engine uses a similar technique.
 
 The name comes from Coco, the protagonist of *Witch Hat Atelier*.
 
