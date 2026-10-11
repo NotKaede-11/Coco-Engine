@@ -7,32 +7,37 @@
   <br>
   <br>
 
-  **A free, open-source C++20 UCI chess engine with NNUE evaluation and Lazy SMP.**
+  **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
 
-  [![Stable release: v1.5.0][release-badge]][release-link]
+  [![Release: v1.5.1][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
+  [![CCRL 40/15: 3027](https://img.shields.io/badge/CCRL%2040%2F15-3027-blue?style=flat-square)](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)
+  [![CCRL Blitz: 2986](https://img.shields.io/badge/CCRL%20Blitz-2986-blue?style=flat-square)](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit)
 
-  [Homepage][homepage-link] · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
+  [Official website](https://notkaede-11.github.io/coco-engine-website/) · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-**Coco Chess Engine** is a free, open-source, cross-platform UCI engine maintained by [NotKaede-11](https://github.com/NotKaede-11). Written in C++20, it combines bitboards, staged move ordering, Lazy SMP parallel search, NNUE evaluation, and optional Syzygy tablebase probing. Releases are available for Windows, Linux, and macOS, with the neural network embedded.
-
-Coco Chess Engine and CuckooChess are different projects. This repository is the home of Coco, named after the character from *Witch Hat Atelier*.
+**Coco Chess Engine** is a free, open-source, cross-platform UCI chess engine created and maintained by [NotKaede-11](https://github.com/NotKaede-11). Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
 
 > [!IMPORTANT]
 > Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
 
-## Coco 1.5.0
+## Strength
 
-**Coco 1.5.0** combines a rebuilt search and board-state foundation with guarded capture ProbCut, explicit principal variations, root-aware time allocation and parallel best-move voting. It retains the existing 512-unit NNUE. The retained SPRT console log records a 1,092-game SPRT pass against the pre-release at `10+0.1`, Threads=1 and Hash=16.
-
-**Estimated strength: approximately 2,977 Elo**, from a local filtered Ordo calibration at `10+0.1`. Coco scored **52.75% over 4,442 retained games** after removing both games of every pair with a timeout/stall and excluding the substituted-network historical opponent. This is **not an official CCRL rating**. The [gauntlet report](docs/evidence/v1.5.0-gauntlet.md) retains all 5,000 original results, the filtered rating table, uncertainty and limitations.
-
-See the [release notes](docs/releases/v1.5.0.md) and [release checklist](docs/RELEASING.md).
+| Version | My Estimate | CCRL 40/15 | CCRL Blitz |
+| :---: | :---: | :---: | :---: |
+| 1.5.1 | 2977 | - | [2986](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit) |
+| 1.5.0 | 2977 | [3027](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - |
+| 1.4.0 | - | - | - |
+| 1.3.0 | - | - | - |
+| 1.1.1 | - | - | [2596](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.1.1%2064-bit#Coco_1_1_1_64-bit) |
+| 1.1.0 | - | - | - |
+| 1.0.1 | - | - | - |
+| 1.0.0 | - | - | - |
 
 ## Quick start
 
@@ -65,50 +70,19 @@ Wait for `bestmove`, then enter `quit`.
 
 Using instructions unsupported by your CPU will prevent the engine from starting. When uncertain, choose the POPCNT or baseline ARM64 build.
 
-## Inside Coco
+## Features
 
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>Board and move generation</strong><br><br>
-      64-bit bitboards, Zobrist hashing, checked make/unmake state, compact incremental position fingerprints, magic sliding attacks, and an optional BMI2/PEXT backend. Dedicated capture, quiet, and evasion generation feeds a staged MovePicker.
-    </td>
-    <td width="50%" valign="top">
-      <strong>Search</strong><br><br>
-      Iterative deepening, aspiration windows, PVS, quiescence search, transposition-table cutoffs, null-move pruning, reverse futility pruning, razoring, late-move reductions, histories, guarded capture ProbCut, explicit principal variations, root-aware time allocation, and guarded extensions.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>Neural evaluation</strong><br><br>
-      A quantized Chess768 NNUE with 512 hidden units per perspective is embedded into release binaries. Both perspectives feed the output layer. Incremental accumulators update only the features changed by each move.
-    </td>
-    <td width="50%" valign="top">
-      <strong>Parallel search</strong><br><br>
-      Lazy SMP workers share a lockless transposition table while retaining independent search state and per-thread node accounting and best-move voting when multiple workers are active.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <strong>Analysis and endgames</strong><br><br>
-      MultiPV, ponder support, external evaluation files, and optional Fathom/Syzygy probing for tablebase positions.
-    </td>
-    <td width="50%" valign="top">
-      <strong>Testing discipline</strong><br><br>
-      Perft, state restoration, deterministic fixed-depth tests, timed A/B comparisons, noisy-position regression suites, sanitizers, and paired SPRT are used before behavioral changes are accepted.
-    </td>
-  </tr>
-</table>
-
-### Pure calculation
-
-Coco contains no built-in opening book and does not consult one during normal UCI play. Its moves come from search.
-
-Development matches may give both engines the same external opening suite. This creates varied, reproducible starting positions without adding book knowledge to the released engine.
+| Component | Architecture & Highlights |
+|:--|:--|
+| **Board & Movegen** | 64-bit bitboards, magic bitboards with optional BMI2/PEXT, staged move ordering |
+| **Search** | Alpha-beta PVS, iterative deepening, aspiration windows, RFP, NMP, LMR, and singular extensions |
+| **Neural Evaluation** | Embedded 768→512×2 NNUE with SIMD-vectorized incremental accumulator updates |
+| **Concurrency** | Lazy SMP multithreading across CPU cores sharing a lockless transposition table |
+| **Endgame & Tools** | MultiPV, ponder support, and integrated Syzygy tablebase probing (up to 6-piece) |
 
 ## UCI configuration
 
-The release build identifies as `Coco v1.5.0` and exposes these fifteen options to chess GUIs:
+The release build identifies as `Coco v1.5.1` and exposes these fifteen options to chess GUIs:
 
 | Option | Default | Purpose |
 |:--|--:|:--|
@@ -119,7 +93,7 @@ The release build identifies as `Coco v1.5.0` and exposes these fifteen options 
 | `MultiPV` | 1 | Number of principal variations to report |
 | `Move Overhead` | 30 ms | Safety allowance for GUI and operating-system latency |
 | `Use PEXT` | hardware dependent | Use the BMI2 sliding-attack backend when supported |
-| `EvalFile` | `coco.nnue` | Load a compatible external network |
+| `EvalFile` | `<embedded>` | Use built-in weights; set an explicit file path to load a compatible external network |
 | `SyzygyPath` | empty | Path to Syzygy tablebase files |
 | `SyzygyProbeDepth` | 1 | Depth threshold for probing positions at the largest loaded tablebase size |
 | `SyzygyProbeLimit` | true | Apply that depth threshold at the largest loaded tablebase size |
@@ -127,10 +101,6 @@ The release build identifies as `Coco v1.5.0` and exposes these fifteen options 
 | `UCI_ShowWDL` | false | Include win/draw/loss permille estimates in analysis output |
 | `UCI_AnalyseMode` | false | Accept the standard GUI analysis-mode signal |
 | `Contempt` | 0 | Optional draw-preference setting; neutral by default |
-
-Eight internal search options remain accepted through `setoption`, but are hidden from GUI discovery: `RFP_Margin`, `LMR_Constant_Scaled`, `NMP_Base`, `NMP_Divisor`, `Aspiration_Delta`, `History_Threshold`, `LMR_History_Divisor`, and `SEE_Pruning_Depth`.
-
-The network is 789,508 bytes with SHA-256 `392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055`. A compatible external `coco.nnue` may override the embedded net. Use the `info string build` diagnostic to verify the active network when comparing results.
 
 ## Build from source
 
@@ -158,35 +128,9 @@ make build ARCH=apple-silicon COMP=clang
 
 Use `COMP=mingw` to cross-compile Windows binaries from Linux. Run `make help` for all supported targets and options.
 
-## Testing and development
-
-Coco treats reproducible evidence as part of implementation. A behavioral candidate must preserve correctness before its speed or playing strength is considered.
-
-```bash
-python testing/validate_options.py ./coco-chess
-python testing/verify_uci_limits.py ./coco-chess
-python testing/run_perft_suite.py 3
-python testing/run_cpp_tests.py
-python testing/noisy_opening_regression.py --engine ./coco-chess
-```
-
-<details>
-<summary><strong>Self-play data generation</strong></summary>
-
-```bash
-coco-chess --datagen 1000000 8 training.bin --seed 20260808
-```
-
-The arguments are target positions, worker threads, and output path. Additional controls include `--buffer`, `--datagen-tt`, `--manifest`, and an explicitly opt-in external `--book` input. Each dataset records its engine, network, seed, schema, adjudication settings, and exact record count; incompatible resumes are refused.
-
-</details>
-
-Search tuning requires a runner configured for the hidden internal parameters and a frozen engine/network baseline. Keep tuning probes separate from an independent candidate-versus-baseline test.
-
-
 ## Project
 
-Coco is a personal, AI-assisted engine-development project. Ideas are treated as hypotheses: changes are retained through correctness checks, deterministic comparisons, and self-play evidence rather than because another engine uses a similar technique.
+Coco is a personal chess engine created, architected, and maintained by [NotKaede-11](https://github.com/NotKaede-11). Ideas are treated as hypotheses: changes are retained through correctness checks, deterministic comparisons, and self-play evidence rather than because another engine uses a similar technique.
 
 The name comes from Coco, the protagonist of *Witch Hat Atelier*.
 
@@ -196,11 +140,10 @@ Bug reports, test games, code review, and constructive feedback are welcome thro
 
 Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
 
-[release-badge]: https://img.shields.io/badge/release-v1.5.0-brightgreen?style=flat-square
-[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.0
+[release-badge]: https://img.shields.io/badge/release-v1.5.1-blue?style=flat-square
+[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.1
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE
 [cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus
 [source-link]: src
 [issues-link]: https://github.com/NotKaede-11/Coco-Engine/issues
-[homepage-link]: https://notkaede-11.github.io/Coco-Engine/
