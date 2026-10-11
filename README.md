@@ -12,7 +12,8 @@
   [![Release: v1.5.1][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
-  [![CCRL 40/15: 2994](https://img.shields.io/badge/CCRL%2040%2F15-2994-blue?style=flat-square)](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)
+  [![CCRL 40/15: 3027](https://img.shields.io/badge/CCRL%2040%2F15-3027-blue?style=flat-square)](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)
+  [![CCRL Blitz: 2986](https://img.shields.io/badge/CCRL%20Blitz-2986-blue?style=flat-square)](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit)
 
   [Official website](https://notkaede-11.github.io/coco-engine-website/) · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
@@ -29,11 +30,11 @@
 
 | Version | My Estimate | CCRL 40/15 | CCRL Blitz |
 | :---: | :---: | :---: | :---: |
-| 1.5.1 | 2977 | - | - |
-| 1.5.0 | 2977 | [2994](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - |
+| 1.5.1 | 2977 | - | [2986](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit) |
+| 1.5.0 | 2977 | [3027](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - |
 | 1.4.0 | - | - | - |
 | 1.3.0 | - | - | - |
-| 1.1.1 | - | - | [2595](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.1.1%2064-bit#Coco_1_1_1_64-bit) |
+| 1.1.1 | - | - | [2596](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.1.1%2064-bit#Coco_1_1_1_64-bit) |
 | 1.1.0 | - | - | - |
 | 1.0.1 | - | - | - |
 | 1.0.0 | - | - | - |
