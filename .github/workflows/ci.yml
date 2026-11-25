@@ -25,7 +25,7 @@ jobs:
           - runner: ubuntu-22.04
             compiler: clang
             arch: x86-64-popcnt
-          - runner: macos-14
+          - runner: macos-15
             compiler: clang
             arch: apple-silicon
           - runner: macos-15-intel
