@@ -202,10 +202,39 @@ jobs:
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.metadata.json
 
+  windows-release-smoke:
+    name: Run packaged Windows binaries
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install chess==1.11.2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coco-chess-windows-*
+          path: release-windows
+          merge-multiple: true
+      - name: Verify embedded startup and search on Windows
+        shell: pwsh
+        run: |
+          foreach ($arch in 'x86-64-popcnt','x86-64-avx2','x86-64-bmi2') {
+            $exe = "release-windows/coco-chess-windows-$arch.exe"
+            python scripts/verify_build_identity.py $exe --arch $arch
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python scripts/verify_fixed_signature.py $exe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python scripts/verify_20_release.py $exe --report "scratch/release-windows-$arch.json"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
   draft:
     name: Create reviewed release draft
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, correctness]
+    needs: [build, correctness, windows-release-smoke]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

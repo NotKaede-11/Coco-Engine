@@ -45,16 +45,20 @@ def write_json(path: Path, payload: object) -> None:
 def create_artifact(args: argparse.Namespace) -> int:
     artifact = args.artifact.resolve()
     network = args.network.resolve()
+    weights = network.read_bytes()
+    executable = artifact.read_bytes()
+    if weights not in executable:
+        raise RuntimeError(f"exact network missing from {artifact.name}")
     payload = {
         "schema": "coco-release-artifact-v1",
         "artifact": artifact.name,
-        "artifact_sha256": sha256(artifact),
-        "artifact_bytes": artifact.stat().st_size,
+        "artifact_sha256": hashlib.sha256(executable).hexdigest().upper(),
+        "artifact_bytes": len(executable),
         "architecture": args.arch,
         "compiler": args.compiler,
         "source_commit": args.source_commit,
-        "nnue_sha256": sha256(network),
-        "nnue_bytes": network.stat().st_size,
+        "nnue_sha256": hashlib.sha256(weights).hexdigest().upper(),
+        "nnue_bytes": len(weights),
         "fixed_signature_nodes": args.fixed_signature,
         "fixed_signature_verified": args.fixed_signature_verified == "true",
         "runtime_identity": runtime_identity(artifact) if args.runtime_engine else None,
