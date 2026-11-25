@@ -1,4 +1,29 @@
 #include "nnue.h"
+#ifdef COCO_FIXED_RAVAGER
+#include "ravager_eval.h"
+#include "build_info.h"
+#include <cstring>
+
+// Preserve the Board/datagen facade while the selected evaluator owns its
+// thread-local feature frames. No legacy/donor trial weights are embedded.
+NNUEEvaluator g_nnue;
+NNUEEvaluator::NNUEEvaluator() : layer2_bias(0),
+    active_network_fingerprint("sha256:" COCO_EMBEDDED_NNUE_SHA256),
+    active_network_source("embedded:ravager-v3") {
+    std::memset(layer1_weights, 0, sizeof layer1_weights);
+    std::memset(layer1_biases, 0, sizeof layer1_biases);
+    std::memset(layer2_weights, 0, sizeof layer2_weights);
+}
+bool NNUEEvaluator::load_network(const std::string& filename) {
+    return filename == "coco.nnue";
+}
+void NNUEEvaluator::init_accumulator(const Board&, Accumulator& acc) const {
+    std::memset(&acc, 0, sizeof acc);
+}
+int NNUEEvaluator::evaluate_nnue(const Board& board) const {
+    return RavagerEval::raw(board);
+}
+#else
 #include <iostream>
 #include <cstdio>
 #include <memory>
@@ -366,3 +391,4 @@ int NNUEEvaluator::evaluate_nnue(const Board& board) const {
 
     return score;
 }
+#endif // COCO_FIXED_RAVAGER

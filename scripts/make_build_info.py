@@ -15,7 +15,8 @@ def main() -> int:
     parser.add_argument("--compiler", default="gcc")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    network = root / "coco.nnue"
+    metadata = json.loads((root / "release.json").read_text(encoding="utf-8"))
+    network = root / metadata.get("nnue_file", "coco.nnue")
     payload = network.read_bytes()
     compiler = args.compiler or "gcc"
     rendered = "\n".join([

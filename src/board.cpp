@@ -1,4 +1,5 @@
 #include "board.h"
+#include "ravager_eval.h"
 #include "movegen.h"
 #include "nnue.h"
 #include <iostream>
@@ -6,13 +7,21 @@
 #include <cctype>
 #include <cassert>
 #include <charconv>
+#include <bit>
 #include <limits>
 
-// Define static members of Board
 U64 Board::zobrist_pieces[2][6][64];
 U64 Board::zobrist_castling[16];
 U64 Board::zobrist_ep[8];
 U64 Board::zobrist_side;
+namespace {
+U64 zobrist_chess960;
+U64 zobrist_castle_rook[4][8];
+
+int castle_index(Color color, bool kingside) {
+    return 2 * color + !kingside;
+}
+}
 
 // Castling rights update mask for fast updates in make_move
 const int castling_rights_mask[64] = {
@@ -44,6 +53,11 @@ void Board::clear() {
     }
     side_to_move = WHITE;
     castling_rights = NO_CASTLING;
+    castle_rook[0] = SQ_H1;
+    castle_rook[1] = SQ_A1;
+    castle_rook[2] = SQ_H8;
+    castle_rook[3] = SQ_A8;
+    chess960 = false;
     en_passant_square = SQ_NONE;
     halfmove_clock = 0;
     fullmove_number = 1;
@@ -53,7 +67,6 @@ void Board::clear() {
     non_pawn_key[BLACK] = 0ULL;
     history_ply = 0;
 
-    // Initialize NNUE accumulator
     g_nnue.init_accumulator(*this, accumulator);
 }
 
@@ -80,7 +93,25 @@ void Board::init_zobrist() {
         zobrist_ep[i] = next_random();
     }
     zobrist_side = next_random();
+    zobrist_chess960 = next_random();
+    for (auto& wing : zobrist_castle_rook)
+        for (U64& key : wing)
+            key = next_random();
 
+}
+
+U64 Board::castling_key() const {
+    U64 key = zobrist_castling[castling_rights];
+    if (chess960) {
+        key ^= zobrist_chess960;
+        unsigned rights = castling_rights;
+        while (rights) {
+            const int wing = std::countr_zero(rights);
+            key ^= zobrist_castle_rook[wing][castle_rook[wing] % 8];
+            rights &= rights - 1;
+        }
+    }
+    return key;
 }
 
 U64 Board::calculate_hash() const {
@@ -91,7 +122,7 @@ U64 Board::calculate_hash() const {
             k ^= zobrist_pieces[p / 6][p % 6][sq];
         }
     }
-    k ^= zobrist_castling[castling_rights];
+    k ^= castling_key();
     if (en_passant_square != SQ_NONE) {
         k ^= zobrist_ep[en_passant_square % 8];
     }
@@ -161,7 +192,7 @@ void Board::update_occupancies() {
     occupancies[BOTH] = occupancies[WHITE] | occupancies[BLACK];
 }
 
-bool Board::parse_fen(const std::string& fen) {
+bool Board::parse_fen(const std::string& fen, bool variant) {
     std::istringstream input(fen);
     std::string placement, active, castling, ep, halfmove, fullmove, extra;
     if (!(input >> placement >> active >> castling >> ep >> halfmove >> fullmove)
@@ -173,6 +204,8 @@ bool Board::parse_fen(const std::string& fen) {
     int file = 0;
     int white_kings = 0;
     int black_kings = 0;
+    int home_king[2] = {SQ_NONE, SQ_NONE};
+    U64 home_rooks[2] = {};
     for (char c : placement) {
         if (c == '/') {
             if (file != 8 || rank == 0) return false;
@@ -188,17 +221,48 @@ bool Board::parse_fen(const std::string& fen) {
             if (++file > 8) return false;
             if (c == 'K') ++white_kings;
             if (c == 'k') ++black_kings;
+            const Color color = std::isupper(static_cast<unsigned char>(c)) ? WHITE : BLACK;
+            if (rank == 7 * color) {
+                const int square = rank * 8 + file - 1;
+                if (lower == 'k') home_king[color] = square;
+                if (lower == 'r') home_rooks[color] |= 1ULL << square;
+            }
         }
     }
     if (rank != 0 || file != 8 || white_kings != 1 || black_kings != 1) return false;
     if (active != "w" && active != "b") return false;
 
+    int rights = NO_CASTLING;
+    int rook_origins[4] = {SQ_H1, SQ_A1, SQ_H8, SQ_A8};
     if (castling != "-") {
-        int seen = 0;
         for (char c : castling) {
-            int bit = c == 'K' ? 1 : c == 'Q' ? 2 : c == 'k' ? 4 : c == 'q' ? 8 : 0;
-            if (bit == 0 || (seen & bit)) return false;
-            seen |= bit;
+            const Color color = std::isupper(static_cast<unsigned char>(c)) ? WHITE : BLACK;
+            const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            bool kingside = lower == 'k';
+            int rook = SQ_NONE;
+            if (!variant) {
+                if (lower != 'k' && lower != 'q') return false;
+            } else {
+                const int king = home_king[color];
+                if (king == SQ_NONE) return false;
+                if (lower == 'k' || lower == 'q') {
+                    U64 rooks = home_rooks[color];
+                    // X-FEN K/Q identify the outermost rook on that side.
+                    while (rooks) {
+                        const int square = pop_lsb(rooks);
+                        if (kingside && square > king) rook = square;
+                        if (!kingside && square < king && rook == SQ_NONE) rook = square;
+                    }
+                } else if (lower >= 'a' && lower <= 'h') {
+                    rook = 56 * color + lower - 'a';
+                    kingside = rook > king;
+                }
+                if (rook == SQ_NONE || !(home_rooks[color] & (1ULL << rook))) return false;
+            }
+            const int wing = castle_index(color, kingside);
+            if (rights & (1 << wing)) return false;
+            rights |= 1 << wing;
+            if (variant) rook_origins[wing] = rook;
         }
     }
     if (ep != "-" && (ep.size() != 2 || ep[0] < 'a' || ep[0] > 'h'
@@ -242,13 +306,9 @@ bool Board::parse_fen(const std::string& fen) {
     }
 
     side_to_move = active == "w" ? WHITE : BLACK;
-    castling_rights = NO_CASTLING;
-    for (char c : castling) {
-        if (c == 'K') castling_rights |= WHITE_OO;
-        else if (c == 'Q') castling_rights |= WHITE_OOO;
-        else if (c == 'k') castling_rights |= BLACK_OO;
-        else if (c == 'q') castling_rights |= BLACK_OOO;
-    }
+    chess960 = variant;
+    castling_rights = rights;
+    for (int wing = 0; wing < 4; ++wing) castle_rook[wing] = rook_origins[wing];
     en_passant_square = ep == "-" ? SQ_NONE
         : static_cast<Square>((ep[1] - '1') * 8 + ep[0] - 'a');
     halfmove_clock = parsed_halfmove;
@@ -264,7 +324,6 @@ bool Board::parse_fen(const std::string& fen) {
     non_pawn_key[BLACK] = calculate_non_pawn_key(BLACK);
     history_ply = 0;
 
-    // Initialize NNUE accumulator
     g_nnue.init_accumulator(*this, accumulator);
     return true;
 }
@@ -308,10 +367,12 @@ std::string Board::get_fen() const {
 
     fen += " ";
     std::string castling = "";
-    if (castling_rights & WHITE_OO) castling += "K";
-    if (castling_rights & WHITE_OOO) castling += "Q";
-    if (castling_rights & BLACK_OO) castling += "k";
-    if (castling_rights & BLACK_OOO) castling += "q";
+    for (int wing = 0; wing < 4; ++wing) {
+        if (castling_rights & (1 << wing)) {
+            castling += chess960 ? (wing < 2 ? 'A' : 'a') + castle_rook[wing] % 8
+                                 : "KQkq"[wing];
+        }
+    }
     if (castling.empty()) castling = "-";
     fen += castling;
 
@@ -328,6 +389,10 @@ std::string Board::get_fen() const {
 }
 
 bool Board::is_square_attacked(int square, int attacker_color) const {
+    return is_square_attacked(square, attacker_color, occupancies[BOTH]);
+}
+
+bool Board::is_square_attacked(int square, int attacker_color, U64 occupancy) const {
     // 1. Attacked by pawns
     int defender_color = attacker_color ^ 1;
     U64 pawn_attackers = get_pawn_attacks(defender_color, square) & pieces[attacker_color][PAWN];
@@ -338,11 +403,11 @@ bool Board::is_square_attacked(int square, int attacker_color) const {
     if (knight_attackers) return true;
 
     // 3. Attacked by bishops/queens (diagonal sliding)
-    U64 bishop_queen_attackers = get_bishop_attacks(square, occupancies[BOTH]) & (pieces[attacker_color][BISHOP] | pieces[attacker_color][QUEEN]);
+    U64 bishop_queen_attackers = get_bishop_attacks(square, occupancy) & (pieces[attacker_color][BISHOP] | pieces[attacker_color][QUEEN]);
     if (bishop_queen_attackers) return true;
 
     // 4. Attacked by rooks/queens (orthogonal sliding)
-    U64 rook_queen_attackers = get_rook_attacks(square, occupancies[BOTH]) & (pieces[attacker_color][ROOK] | pieces[attacker_color][QUEEN]);
+    U64 rook_queen_attackers = get_rook_attacks(square, occupancy) & (pieces[attacker_color][ROOK] | pieces[attacker_color][QUEEN]);
     if (rook_queen_attackers) return true;
 
     // 5. Attacked by king
@@ -352,10 +417,61 @@ bool Board::is_square_attacked(int square, int attacker_color) const {
     return false;
 }
 
+Move Board::castle_move(bool kingside) const {
+    const Color us = side_to_move;
+    const int wing = castle_index(us, kingside);
+    if (!(castling_rights & (1 << wing))) return Move();
+    const int king = get_lsb(pieces[us][KING]);
+    const int rook = castle_rook[wing];
+    if (king / 8 != 7 * us || (!chess960 && king % 8 != 4)
+        || !(pieces[us][ROOK] & (1ULL << rook))) return Move();
+
+    const int king_to = 56 * us + (kingside ? 6 : 2);
+    const int rook_to = 56 * us + (kingside ? 5 : 3);
+    const U64 kingless = occupancies[BOTH] & ~(1ULL << king);
+    const U64 vacant = kingless & ~(1ULL << rook);
+    const U64 travel = between_bb[king][king_to] | between_bb[rook][rook_to]
+                     | (1ULL << king_to) | (1ULL << rook_to);
+    if (vacant & travel) return Move();
+
+    U64 crossings = between_bb[king][king_to] | (1ULL << king);
+    while (crossings)
+        if (is_square_attacked(pop_lsb(crossings), us ^ 1, kingless)) return Move();
+    if (is_square_attacked(king_to, us ^ 1, vacant | (1ULL << rook_to))) return Move();
+
+    return Move(king, chess960 ? rook : king_to, kingside ? FLAG_KING_CASTLE : FLAG_QUEEN_CASTLE);
+}
+
+void Board::relocate_castling(Color color, int king_from, int rook_from, int king_to, int rook_to) {
+    // Clear both origins before writing either destination. In Chess960 a
+    // piece can stay in place, land on the other piece's square, or swap.
+    board_array[king_from] = board_array[rook_from] = NO_PIECE;
+    board_array[king_to] = static_cast<Piece>(color * 6 + KING);
+    board_array[rook_to] = static_cast<Piece>(color * 6 + ROOK);
+    pieces[color][KING] = 1ULL << king_to;
+    clear_bit(pieces[color][ROOK], rook_from);
+    set_bit(pieces[color][ROOK], rook_to);
+    const U64 origins = (1ULL << king_from) | (1ULL << rook_from);
+    const U64 destinations = (1ULL << king_to) | (1ULL << rook_to);
+    occupancies[color] = (occupancies[color] & ~origins) | destinations;
+    occupancies[BOTH] = (occupancies[BOTH] & ~origins) | destinations;
+    if (king_from != king_to) {
+        nnue_move_piece(color, KING, king_from, king_to);
+        xor_piece_keys(color, KING, king_from);
+        xor_piece_keys(color, KING, king_to);
+    }
+    if (rook_from != rook_to) {
+        nnue_move_piece(color, ROOK, rook_from, rook_to);
+        xor_piece_keys(color, ROOK, rook_from);
+        xor_piece_keys(color, ROOK, rook_to);
+    }
+}
+
 bool Board::make_move(Move move, bool checked) {
     if (history_ply < 0 || history_ply >= HISTORY_CAPACITY) {
         return false;
     }
+    RavagerEval::before_move(*this, history_ply);
     assert(history_ply >= 0 && history_ply < HISTORY_CAPACITY);
 
     int from = move.from();
@@ -366,6 +482,8 @@ bool Board::make_move(Move move, bool checked) {
     Color them = (Color)(us ^ 1);
     Piece moving_piece = board_array[from];
     PieceType pt = (PieceType)(moving_piece % 6);
+    if (chess960 && move.is_castling() && !checked && move != castle_move(flag == FLAG_KING_CASTLE))
+        return false;
 
     side_to_move = them;
 
@@ -373,7 +491,6 @@ bool Board::make_move(Move move, bool checked) {
         fullmove_number++;
     }
 
-    // Save state before making the move
     history[history_ply] = {
         castling_rights,
         en_passant_square,
@@ -387,125 +504,83 @@ bool Board::make_move(Move move, bool checked) {
 
     // XOR out old side, castling, and EP
     hash_key ^= zobrist_side;
-    hash_key ^= zobrist_castling[castling_rights];
+    hash_key ^= castling_key();
     if (en_passant_square != SQ_NONE) {
         hash_key ^= zobrist_ep[en_passant_square % 8];
     }
 
-    // Default next EP square is none
     int new_en_passant_square = SQ_NONE;
 
-    // Handle captures
-    if (move.is_capture()) {
-        if (flag == FLAG_EP) {
-            int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
-            Piece captured = board_array[ep_pawn_sq];
-            history[history_ply - 1].captured_piece = captured;
-            
-            // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-            nnue_deactivate_piece(them, PAWN, ep_pawn_sq);
-
-            clear_bit(pieces[them][PAWN], ep_pawn_sq);
-            board_array[ep_pawn_sq] = NO_PIECE;
-            clear_bit(occupancies[them], ep_pawn_sq);
-            clear_bit(occupancies[BOTH], ep_pawn_sq);
-            xor_piece_keys(them, PAWN, ep_pawn_sq);
-        } else {
-            Piece captured = board_array[to];
-            history[history_ply - 1].captured_piece = captured;
-            PieceType cap_type = (PieceType)(captured % 6);
-
-            // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-            nnue_deactivate_piece(them, cap_type, to);
-
-            clear_bit(pieces[them][cap_type], to);
-            clear_bit(occupancies[them], to);
-            clear_bit(occupancies[BOTH], to);
-            xor_piece_keys(them, cap_type, to);
-        }
-        halfmove_clock = 0; // Reset on capture
+    if (move.is_castling()) {
+        const bool kingside = flag == FLAG_KING_CASTLE;
+        relocate_castling(us, from, castle_rook[castle_index(us, kingside)],
+                          56 * us + (kingside ? 6 : 2), 56 * us + (kingside ? 5 : 3));
+        ++halfmove_clock;
     } else {
-        halfmove_clock++;
-    }
+        if (move.is_capture()) {
+            if (flag == FLAG_EP) {
+                int ep_pawn_sq = (us == WHITE) ? (to - 8) : (to + 8);
+                Piece captured = board_array[ep_pawn_sq];
+                history[history_ply - 1].captured_piece = captured;
 
-    // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-    nnue_deactivate_piece(us, pt, from);
-    nnue_activate_piece(us, pt, to);
+                nnue_deactivate_piece(them, PAWN, ep_pawn_sq);
 
-    clear_bit(pieces[us][pt], from);
-    set_bit(pieces[us][pt], to);
-    clear_bit(occupancies[us], from);
-    set_bit(occupancies[us], to);
-    clear_bit(occupancies[BOTH], from);
-    set_bit(occupancies[BOTH], to);
-    board_array[from] = NO_PIECE;
-    board_array[to] = moving_piece;
+                clear_bit(pieces[them][PAWN], ep_pawn_sq);
+                board_array[ep_pawn_sq] = NO_PIECE;
+                clear_bit(occupancies[them], ep_pawn_sq);
+                clear_bit(occupancies[BOTH], ep_pawn_sq);
+                xor_piece_keys(them, PAWN, ep_pawn_sq);
+            } else {
+                Piece captured = board_array[to];
+                history[history_ply - 1].captured_piece = captured;
+                PieceType cap_type = (PieceType)(captured % 6);
 
-    xor_piece_keys(us, pt, from);
-    xor_piece_keys(us, pt, to);
+                nnue_deactivate_piece(them, cap_type, to);
 
-    // Handle promotions
-    if (move.is_promotion()) {
-        PieceType promo_pt = (PieceType)move.promotion_piece_type();
-        
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        nnue_deactivate_piece(us, PAWN, to);
-        nnue_activate_piece(us, promo_pt, to);
+                clear_bit(pieces[them][cap_type], to);
+                clear_bit(occupancies[them], to);
+                clear_bit(occupancies[BOTH], to);
+                xor_piece_keys(them, cap_type, to);
+            }
+            halfmove_clock = 0; // Reset on capture
+        } else if (pt == PAWN) {
+            halfmove_clock = 0; // Pawn pushes and non-capturing promotions reset rule 50 too.
+        } else {
+            halfmove_clock++;
+        }
 
-        clear_bit(pieces[us][PAWN], to);
-        set_bit(pieces[us][promo_pt], to);
-        board_array[to] = (Piece)(us * 6 + promo_pt);
+        nnue_move_piece(us, pt, from, to);
 
-        xor_piece_keys(us, PAWN, to);
-        xor_piece_keys(us, promo_pt, to);
-    }
+        clear_bit(pieces[us][pt], from);
+        set_bit(pieces[us][pt], to);
+        clear_bit(occupancies[us], from);
+        set_bit(occupancies[us], to);
+        clear_bit(occupancies[BOTH], from);
+        set_bit(occupancies[BOTH], to);
+        board_array[from] = NO_PIECE;
+        board_array[to] = moving_piece;
 
-    // Handle double pawn pushes (setup en passant)
-    if (flag == FLAG_DOUBLE_PAWN) {
-        new_en_passant_square = (us == WHITE) ? (from + 8) : (from - 8);
-    }
+        xor_piece_keys(us, pt, from);
+        xor_piece_keys(us, pt, to);
 
-    // Handle castling
-    if (flag == FLAG_KING_CASTLE) {
-        int r_from = (us == WHITE) ? SQ_H1 : SQ_H8;
-        int r_to = (us == WHITE) ? SQ_F1 : SQ_F8;
-        Piece rook = (us == WHITE) ? W_ROOK : B_ROOK;
+        if (move.is_promotion()) {
+            PieceType promo_pt = (PieceType)move.promotion_piece_type();
 
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        nnue_deactivate_piece(us, ROOK, r_from);
-        nnue_activate_piece(us, ROOK, r_to);
+            nnue_deactivate_piece(us, PAWN, to);
+            nnue_activate_piece(us, promo_pt, to);
 
-        clear_bit(pieces[us][ROOK], r_from);
-        set_bit(pieces[us][ROOK], r_to);
-        clear_bit(occupancies[us], r_from);
-        set_bit(occupancies[us], r_to);
-        clear_bit(occupancies[BOTH], r_from);
-        set_bit(occupancies[BOTH], r_to);
-        board_array[r_from] = NO_PIECE;
-        board_array[r_to] = rook;
+            clear_bit(pieces[us][PAWN], to);
+            set_bit(pieces[us][promo_pt], to);
+            board_array[to] = (Piece)(us * 6 + promo_pt);
 
-        xor_piece_keys(us, ROOK, r_from);
-        xor_piece_keys(us, ROOK, r_to);
-    } else if (flag == FLAG_QUEEN_CASTLE) {
-        int r_from = (us == WHITE) ? SQ_A1 : SQ_A8;
-        int r_to = (us == WHITE) ? SQ_D1 : SQ_D8;
-        Piece rook = (us == WHITE) ? W_ROOK : B_ROOK;
+            xor_piece_keys(us, PAWN, to);
+            xor_piece_keys(us, promo_pt, to);
+        }
 
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        nnue_deactivate_piece(us, ROOK, r_from);
-        nnue_activate_piece(us, ROOK, r_to);
-
-        clear_bit(pieces[us][ROOK], r_from);
-        set_bit(pieces[us][ROOK], r_to);
-        clear_bit(occupancies[us], r_from);
-        set_bit(occupancies[us], r_to);
-        clear_bit(occupancies[BOTH], r_from);
-        set_bit(occupancies[BOTH], r_to);
-        board_array[r_from] = NO_PIECE;
-        board_array[r_to] = rook;
-
-        xor_piece_keys(us, ROOK, r_from);
-        xor_piece_keys(us, ROOK, r_to);
+        // Handle double pawn pushes (setup en passant)
+        if (flag == FLAG_DOUBLE_PAWN) {
+            new_en_passant_square = (us == WHITE) ? (from + 8) : (from - 8);
+        }
     }
 
     // Verify move legality (cannot expose king to check)
@@ -517,10 +592,15 @@ bool Board::make_move(Move move, bool checked) {
         }
     }
 
-    // Finalize state updates
-    int new_castling_rights = castling_rights & castling_rights_mask[from] & castling_rights_mask[to];
-    hash_key ^= zobrist_castling[new_castling_rights];
-    castling_rights = new_castling_rights;
+    if (!chess960) {
+        castling_rights &= castling_rights_mask[from] & castling_rights_mask[to];
+    } else if (castling_rights) {
+        if (pt == KING) castling_rights &= ~(3 << (2 * us));
+        for (int wing = 0; wing < 4; ++wing)
+            if (from == castle_rook[wing] || to == castle_rook[wing])
+                castling_rights &= ~(1 << wing);
+    }
+    hash_key ^= castling_key();
 
     en_passant_square = new_en_passant_square;
     if (!has_en_passant_capture()) {
@@ -539,7 +619,6 @@ void Board::unmake_move(Move move) {
         return;
     }
 
-    // Pop state info
     history_ply--;
     StateInfo state = history[history_ply];
 
@@ -549,120 +628,74 @@ void Board::unmake_move(Move move) {
 
     Color us = side_to_move; // us is the color to move NOW (which is them of the move)
     Color player = (Color)(us ^ 1);
-    Piece moving_piece = board_array[to];
-
-    // Reverse the exact NNUE feature changes made by make_move.  This avoids
-    // storing a 2 KiB accumulator snapshot in every history entry.
-    if (move.is_promotion()) {
-        PieceType promo_pt = (PieceType)move.promotion_piece_type();
-        nnue_deactivate_piece(player, promo_pt, to);
-        nnue_activate_piece(player, PAWN, from);
-    } else {
-        PieceType moved_pt = (PieceType)(moving_piece % 6);
-        nnue_deactivate_piece(player, moved_pt, to);
-        nnue_activate_piece(player, moved_pt, from);
-    }
-
-    if (move.is_capture()) {
-        int captured_sq = (flag == FLAG_EP)
-            ? ((player == WHITE) ? (to - 8) : (to + 8))
-            : to;
-        Piece captured = state.captured_piece;
-        nnue_activate_piece(us, captured % 6, captured_sq);
-    }
-
-    if (flag == FLAG_KING_CASTLE || flag == FLAG_QUEEN_CASTLE) {
-        int rook_from = flag == FLAG_KING_CASTLE
-            ? ((player == WHITE) ? SQ_H1 : SQ_H8)
-            : ((player == WHITE) ? SQ_A1 : SQ_A8);
-        int rook_to = flag == FLAG_KING_CASTLE
-            ? ((player == WHITE) ? SQ_F1 : SQ_F8)
-            : ((player == WHITE) ? SQ_D1 : SQ_D8);
-        nnue_deactivate_piece(player, ROOK, rook_to);
-        nnue_activate_piece(player, ROOK, rook_from);
-    }
-
-    // Restore side to move
     side_to_move = player;
+    if (move.is_castling()) {
+        const bool kingside = flag == FLAG_KING_CASTLE;
+        relocate_castling(player, 56 * player + (kingside ? 6 : 2), 56 * player + (kingside ? 5 : 3),
+                          from, castle_rook[castle_index(player, kingside)]);
+    } else {
+        Piece moving_piece = board_array[to];
 
-    // Handle promotions: revert piece back to pawn before moving back
-    if (move.is_promotion()) {
-        PieceType promo_pt = (PieceType)move.promotion_piece_type();
-        
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        clear_bit(pieces[player][promo_pt], to);
-        set_bit(pieces[player][PAWN], to);
-        board_array[to] = (Piece)(player * 6 + PAWN);
-        moving_piece = board_array[to];
-    }
-
-    PieceType pt = (PieceType)(moving_piece % 6);
-
-    // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-    // Move the piece from to -> from
-    clear_bit(pieces[player][pt], to);
-    set_bit(pieces[player][pt], from);
-    clear_bit(occupancies[player], to);
-    set_bit(occupancies[player], from);
-    clear_bit(occupancies[BOTH], to);
-    set_bit(occupancies[BOTH], from);
-    board_array[from] = moving_piece;
-    board_array[to] = NO_PIECE;
-
-    // Handle captured pieces
-    if (move.is_capture()) {
-        Piece captured = state.captured_piece;
-        PieceType cap_type = (PieceType)(captured % 6);
-        
-        if (flag == FLAG_EP) {
-            int ep_pawn_sq = (player == WHITE) ? (to - 8) : (to + 8);
-            
-            // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-            set_bit(pieces[us][PAWN], ep_pawn_sq);
-            set_bit(occupancies[us], ep_pawn_sq);
-            set_bit(occupancies[BOTH], ep_pawn_sq);
-            board_array[ep_pawn_sq] = captured;
+        // Reverse the exact NNUE feature changes made by make_move.  This avoids
+        // storing a 2 KiB accumulator snapshot in every history entry.
+        if (move.is_promotion()) {
+            PieceType promo_pt = (PieceType)move.promotion_piece_type();
+            nnue_deactivate_piece(player, promo_pt, to);
+            nnue_activate_piece(player, PAWN, from);
         } else {
-            // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-            set_bit(pieces[us][cap_type], to);
-            set_bit(occupancies[us], to);
-            set_bit(occupancies[BOTH], to);
-            board_array[to] = captured;
+            PieceType moved_pt = (PieceType)(moving_piece % 6);
+            nnue_move_piece(player, moved_pt, to, from);
+        }
+
+        if (move.is_capture()) {
+            int captured_sq = (flag == FLAG_EP)
+                ? ((player == WHITE) ? (to - 8) : (to + 8))
+                : to;
+            Piece captured = state.captured_piece;
+            nnue_activate_piece(us, captured % 6, captured_sq);
+        }
+
+        // Handle promotions: revert piece back to pawn before moving back
+        if (move.is_promotion()) {
+            PieceType promo_pt = (PieceType)move.promotion_piece_type();
+
+            clear_bit(pieces[player][promo_pt], to);
+            set_bit(pieces[player][PAWN], to);
+            board_array[to] = (Piece)(player * 6 + PAWN);
+            moving_piece = board_array[to];
+        }
+
+        PieceType pt = (PieceType)(moving_piece % 6);
+
+        clear_bit(pieces[player][pt], to);
+        set_bit(pieces[player][pt], from);
+        clear_bit(occupancies[player], to);
+        set_bit(occupancies[player], from);
+        clear_bit(occupancies[BOTH], to);
+        set_bit(occupancies[BOTH], from);
+        board_array[from] = moving_piece;
+        board_array[to] = NO_PIECE;
+
+        if (move.is_capture()) {
+            Piece captured = state.captured_piece;
+            PieceType cap_type = (PieceType)(captured % 6);
+
+            if (flag == FLAG_EP) {
+                int ep_pawn_sq = (player == WHITE) ? (to - 8) : (to + 8);
+
+                set_bit(pieces[us][PAWN], ep_pawn_sq);
+                set_bit(occupancies[us], ep_pawn_sq);
+                set_bit(occupancies[BOTH], ep_pawn_sq);
+                board_array[ep_pawn_sq] = captured;
+            } else {
+                set_bit(pieces[us][cap_type], to);
+                set_bit(occupancies[us], to);
+                set_bit(occupancies[BOTH], to);
+                board_array[to] = captured;
+            }
         }
     }
 
-    // Handle castling rook moves back
-    if (flag == FLAG_KING_CASTLE) {
-        int r_from = (player == WHITE) ? SQ_H1 : SQ_H8;
-        int r_to = (player == WHITE) ? SQ_F1 : SQ_F8;
-        Piece rook = (player == WHITE) ? W_ROOK : B_ROOK;
-
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        clear_bit(pieces[player][ROOK], r_to);
-        set_bit(pieces[player][ROOK], r_from);
-        clear_bit(occupancies[player], r_to);
-        set_bit(occupancies[player], r_from);
-        clear_bit(occupancies[BOTH], r_to);
-        set_bit(occupancies[BOTH], r_from);
-        board_array[r_to] = NO_PIECE;
-        board_array[r_from] = rook;
-    } else if (flag == FLAG_QUEEN_CASTLE) {
-        int r_from = (player == WHITE) ? SQ_A1 : SQ_A8;
-        int r_to = (player == WHITE) ? SQ_D1 : SQ_D8;
-        Piece rook = (player == WHITE) ? W_ROOK : B_ROOK;
-
-        // NNUE INCREMENTAL ACCUMULATOR UPDATE HOOK
-        clear_bit(pieces[player][ROOK], r_to);
-        set_bit(pieces[player][ROOK], r_from);
-        clear_bit(occupancies[player], r_to);
-        set_bit(occupancies[player], r_from);
-        clear_bit(occupancies[BOTH], r_to);
-        set_bit(occupancies[BOTH], r_from);
-        board_array[r_to] = NO_PIECE;
-        board_array[r_from] = rook;
-    }
-
-    // Restore state variables
     castling_rights = state.castling_rights;
     en_passant_square = state.en_passant_square;
     halfmove_clock = state.halfmove_clock;
@@ -715,26 +748,17 @@ void Board::print() const {
     std::cout << "Zobrist Hash: 0x" << std::hex << hash_key << std::dec << "\n\n";
 }
 
-void Board::nnue_activate_piece(int color, int pt, int sq) {
-    int idx_w = get_feature_index_white(color, pt, sq);
-    int idx_b = get_feature_index_black(color, pt, sq);
+void Board::nnue_activate_piece(int color, int pt, int sq) {}
 
-    g_nnue.accumulator_activate(accumulator, WHITE, idx_w);
-    g_nnue.accumulator_activate(accumulator, BLACK, idx_b);
-}
+void Board::nnue_deactivate_piece(int color, int pt, int sq) {}
 
-void Board::nnue_deactivate_piece(int color, int pt, int sq) {
-    int idx_w = get_feature_index_white(color, pt, sq);
-    int idx_b = get_feature_index_black(color, pt, sq);
-
-    g_nnue.accumulator_deactivate(accumulator, WHITE, idx_w);
-    g_nnue.accumulator_deactivate(accumulator, BLACK, idx_b);
-}
+void Board::nnue_move_piece(int color, int pt, int from, int to) {}
 
 bool Board::make_null_move() {
     if (history_ply < 0 || history_ply >= HISTORY_CAPACITY) {
         return false;
     }
+    RavagerEval::before_move(*this, history_ply);
     assert(history_ply >= 0 && history_ply < HISTORY_CAPACITY);
 
     // Save current state on history stack
@@ -755,10 +779,8 @@ bool Board::make_null_move() {
         hash_key ^= zobrist_ep[en_passant_square % 8];
     }
 
-    // Toggle side to move
     side_to_move = (Color)(side_to_move ^ 1);
 
-    // Clear en passant square
     en_passant_square = SQ_NONE;
     return true;
 }
@@ -977,6 +999,7 @@ LegalityMasks Board::get_legality_masks() const {
 }
 
 bool Board::is_move_legal(Move move, const LegalityMasks& masks) const {
+    if (chess960 && move.is_castling()) return move == castle_move(move.flag() == FLAG_KING_CASTLE);
     int from = move.from();
     int to = move.to();
     int flag = move.flag();

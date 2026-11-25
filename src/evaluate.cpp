@@ -1,4 +1,5 @@
 #include "evaluate.h"
+#include "ravager_eval.h"
 #include "types.h"
 #include "nnue.h"
 #include "movegen.h"
@@ -162,7 +163,7 @@ namespace Evaluation {
                 }
             }
 
-            // T2: pawn structure and basic material imbalances.
+            // Pawn structure and material imbalances.
             for (int file = 0; file < 8; ++file) {
                 const int count = count_bits(own_pawns & (FILE_A << file));
                 if (count > 1) {
@@ -259,7 +260,7 @@ namespace Evaluation {
             imbalance.mg += sign * count_bits(board.get_pieces(us, KNIGHT)) * (pawn_count - 4);
             imbalance.eg += sign * count_bits(board.get_pieces(us, ROOK)) * (4 - pawn_count);
 
-            // T3: levers and threats.
+            // Pawn levers and threats.
             const U64 pawn_attack_map = color == WHITE
                 ? pawn_attacks_white(own_pawns) : pawn_attacks_black(own_pawns);
             const int levers = count_bits(pawn_attack_map & enemy_pawns);
@@ -355,7 +356,7 @@ namespace Evaluation {
                 }
             }
 
-            // T4: mobility and activity.
+            // Mobility and activity.
             U64 pieces = board.get_pieces(us, KNIGHT);
             while (pieces) {
                 const int square = pop_lsb(pieces);
@@ -441,7 +442,7 @@ namespace Evaluation {
             mobility.mg += sign * 2 * space;
             mobility.eg += sign * space;
 
-            // T5: king shelter, king-ring pressure, and endgame king activity.
+            // King shelter, king-ring pressure, and endgame king activity.
             const U64 king = board.get_pieces(us, KING);
             if (king) {
                 const int square = get_lsb(king);
@@ -603,10 +604,8 @@ namespace Evaluation {
         return stm_score;
     }
 
-    // Master evaluation function
     int evaluate(const Board& board) {
-        // Return the NNUE evaluation directly
-        return g_nnue.evaluate_nnue(board);
+        return RavagerEval::raw(board);
     }
 }
 

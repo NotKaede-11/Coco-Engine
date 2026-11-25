@@ -1,16 +1,14 @@
 #include "search.h"
+#include "ravager_eval.h"
+
 #include "types.h"
 #include "movegen.h"
 #include "tt.h"
 #include "evaluate.h"
+#include "search_policy.h"
 #include "tbprobe.h"
 #include <iostream>
 
-// Constants for evaluation and search bounds
-// Decisive tablebase scores must remain below the mate band so that UCI mate
-// conversion, TT score normalization, and mate-distance pruning cannot confuse
-// a DTZ result with a forced checkmate.
-const int VALUE_TB = 28000;
 #include <chrono>
 #include <algorithm>
 #include <array>
@@ -19,19 +17,14 @@ const int VALUE_TB = 28000;
 #include <thread>
 #include <vector>
 
-// Constants for evaluation and search bounds
-const int MATE_SCORE = 30000;
-const int MATE_THRESHOLD = 29000;
-
-// Nodes visited counter
 thread_local uint64_t nodes_visited = 0;
 thread_local int active_thread_id = 0;
 
-// Maximum ply reached in search (for seldepth reporting)
 thread_local int max_ply_reached = 0;
 thread_local Move root_excluded_moves[256];
 thread_local int root_excluded_count = 0;
 thread_local Move root_search_best_move;
+thread_local Move root_first_search_move;
 thread_local TranspositionTable* thread_tt = &tt;
 thread_local bool root_accounting_enabled = false;
 thread_local int currmove_report_depth = -1;
@@ -99,15 +92,14 @@ thread_local uint64_t probcut_test_nodes = 0;
 thread_local int probcut_test_last_score = -INFINITY_SCORE;
 #endif
 
-// Time utility in milliseconds
 inline uint64_t get_time_ms() {
     auto now = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
-// Check time and trigger abort if hard boundary is exceeded
-inline void check_time() {
-    if ((nodes_visited & Search::time_check_mask) != 0)
+inline void check_time(bool root = false) {
+    if ((nodes_visited & Search::time_check_mask) != 0
+        && !(root && Search::hard_limit != 0))
         return;
 
     // Publish progress only at an existing periodic stop check.  This keeps
@@ -134,7 +126,6 @@ inline void check_time() {
     }
 }
 
-// Move string converter helper
 std::string move_to_str(Move m) {
     if (m.is_none()) return "0000";
     std::string s = square_to_str(m.from()) + square_to_str(m.to());
@@ -148,7 +139,6 @@ std::string move_to_str(Move m) {
     return s;
 }
 
-const int MAX_PLY = 128;
 thread_local Move killer_moves[MAX_PLY][2];
 thread_local Move explicit_pv[MAX_PLY][MAX_PLY];
 thread_local int explicit_pv_length[MAX_PLY];
@@ -187,17 +177,25 @@ int copy_explicit_pv(Move* output, int max_depth) {
     return length;
 }
 
+static bool pv_draw_boundary(const Board& board) {
+    return board.get_halfmove_clock() >= 100 || board.is_repetition();
+}
+
 int complete_explicit_pv_from_tt(Board& board, Move* pv, int length,
                                  int max_depth, bool include_bound_moves) {
     int replayed = 0;
-    for (; replayed < length; ++replayed) {
+    bool reached_draw = false;
+    while (replayed < length) {
         if (!board.make_move(pv[replayed], true)) {
-            length = replayed;
             break;
         }
+        ++replayed;
+        reached_draw = pv_draw_boundary(board);
+        if (reached_draw) break;
     }
 
-    if (length < max_depth) {
+    length = replayed;
+    if (!reached_draw && length < max_depth) {
         Move tail[MAX_PLY];
         const int tail_length = get_pv_impl(
             board, tail, max_depth - length, include_bound_moves);
@@ -222,12 +220,11 @@ struct SearchStack {
 };
 thread_local SearchStack search_stack[MAX_PLY + 4];
 thread_local int16_t cont_history[2][7][64][7][64];
-thread_local int16_t capture_history[12][64][6];
+// Capture history also buckets by whether the destination is threatened.
+thread_local int16_t capture_history[12][64][2][6];
 
 #ifdef COCO_CORRHIST_PROFILE
-// Compile-time-only shadow profiler for Phase 3.1. It never changes an
-// evaluation or a search decision. The three tables isolate table-size and
-// cross-search-lifetime effects while replaying the rejected calibration.
+// Shadow tables measure size and lifetime effects without affecting search.
 struct CorrHistProfileStats {
     uint64_t lookups = 0;
     uint64_t occupied_hits = 0;
@@ -460,6 +457,14 @@ inline void widen_aspiration_window(int score, int& alpha, int& beta,
     delta += delta / 2;
 }
 
+inline void widen_donor_window(int score, int previous, int& alpha, int& beta,
+                               int& delta, bool fail_low) {
+    CocoPolicy::widen(score, previous, fail_low, alpha, beta, delta);
+    auto& stats = Search::thread_stats[active_thread_id];
+    auto& failures = fail_low ? stats.aspiration_fail_lows : stats.aspiration_fail_highs;
+    failures.fetch_add(1, std::memory_order_relaxed);
+}
+
 inline void update_history(int16_t& entry, int bonus) {
     int val = entry;
     val += bonus - val * std::abs(bonus) / 32768;
@@ -467,11 +472,26 @@ inline void update_history(int16_t& entry, int bonus) {
 }
 
 inline int draw_score(const Board& board) {
-    return board.get_side_to_move() == root_color ? -Search::Contempt : Search::Contempt;
+    return DRAW_SCORE + (board.get_side_to_move() == root_color ? -Search::Contempt : Search::Contempt);
 }
 
 
-// Map Fathom move representation to Coco's Move class
+// Called only at a non-root rule50 boundary. Checkmate takes precedence
+// over a draw claim; a checked side with any legal evasion can still claim.
+static int rule50_terminal_score(const Board& board, int ply) {
+    const Color side = board.get_side_to_move();
+    const U64 king = board.get_pieces(side, KING);
+    if (!king) return -MATE_SCORE + ply;
+    if (!board.is_square_attacked(get_lsb(king), side ^ 1)) return draw_score(board);
+    MoveList evasions;
+    generate_evasion_moves(board, evasions);
+    const LegalityMasks masks = board.get_legality_masks();
+    for (int i = 0; i < evasions.count; ++i)
+        if (board.is_move_legal(evasions.moves[i], masks)) return draw_score(board);
+    return -MATE_SCORE + ply;
+}
+
+
 Move fathom_to_coco_move(const Board& board, unsigned fathom_res) {
     int from = TB_GET_FROM(fathom_res);
     int to = TB_GET_TO(fathom_res);
@@ -505,7 +525,6 @@ Move fathom_to_coco_move(const Board& board, unsigned fathom_res) {
     return Move(from, to, flags);
 }
 
-// Convert Coco board to Fathom bitboards and call tb_probe_wdl
 unsigned probe_wdl(const Board& board) {
     U64 white = board.get_occupancy(WHITE);
     U64 black = board.get_occupancy(BLACK);
@@ -526,7 +545,6 @@ unsigned probe_wdl(const Board& board) {
 }
 
 
-// Helper to retrieve the combined quiet history score for a move
 inline int get_quiet_history_score(const Board& board, Move move, int ply, U64 threats) {
     Color side = board.get_side_to_move();
     Piece piece_raw = board.get_piece_at(move.from());
@@ -556,12 +574,40 @@ inline int get_quiet_history_score(const Board& board, Move move, int ply, U64 t
     return score;
 }
 
-// Move Ordering helper function using stack memory
-void order_moves(const Board& board, const MoveList& move_list, Move tt_move, int ply, int* scores, U64 threats = 0) {
+
+thread_local int16_t four_ply_history[7][64][7][64]{};
+
+int16_t* four_ply_entry(int ply, int piece, int to) {
+    if (ply < 4 || ply - 4 >= MAX_PLY || piece >= 6) return nullptr;
+    const auto& previous = search_stack[ply - 4];
+    if (previous.piece < 0 || previous.piece >= 6 || unsigned(previous.to_sq) >= 64) return nullptr;
+    return &four_ply_history[previous.piece][previous.to_sq][piece][to];
+}
+
+int trial_history_score(const Board& board, Move move, int ply) {
+    const int piece = board.get_piece_at(move.from()) % 6;
+    if (piece >= 6) return 0;
+    const auto* entry = four_ply_entry(ply, piece, move.to());
+    return entry ? *entry / 2 : 0;
+}
+
+void update_trial_history(const Board& board, Move move, int ply, int bonus) {
+    const int piece = board.get_piece_at(move.from()) % 6;
+    if (piece >= 6) return;
+    if (auto* entry = four_ply_entry(ply, piece, move.to()))
+        update_history(*entry, bonus);
+}
+
+void order_moves(const Board& board, const MoveList& move_list, Move tt_move, int ply, int* scores, U64 threats = 0, U64 capture_threats = 0) {
     const int mvv_lva_values[6] = { 100, 320, 330, 500, 900, 20000 };
     
     Color side = board.get_side_to_move();
-    
+    U64 pawn_threats = 0;
+    if (threats) {
+        const U64 pawns = board.get_pieces(side ^ 1, PAWN);
+        pawn_threats = side == WHITE ? pawn_attacks_black(pawns) : pawn_attacks_white(pawns);
+    }
+
     for (int i = 0; i < move_list.count; i++) {
         Move move = move_list.moves[i];
         
@@ -582,8 +628,8 @@ void order_moves(const Board& board, const MoveList& move_list, Move tt_move, in
             
             int moved_piece = board.get_piece_at(move.from());
             int cap_hist = 0;
-            if (moved_piece < 12 && victim < 6) {
-                cap_hist = capture_history[moved_piece][move.to()][victim];
+            if (moved_piece >= 0 && moved_piece < 12 && victim >= 0 && victim < 6) {
+                cap_hist = capture_history[moved_piece][move.to()][bool(capture_threats & (1ULL << move.to()))][victim];
             }
             
             if (mvv_lva_values[victim] >= mvv_lva_values[assailant]) {
@@ -595,26 +641,42 @@ void order_moves(const Board& board, const MoveList& move_list, Move tt_move, in
             int promo = move.promotion_piece_type();
             scores[i] = 950000 + mvv_lva_values[promo];
         } else {
-            // Quiet move
             if (ply < MAX_PLY && move == killer_moves[ply][0]) {
                 scores[i] = 900000;
             } else if (ply < MAX_PLY && move == killer_moves[ply][1]) {
                 scores[i] = 800000;
             } else {
-                scores[i] = get_quiet_history_score(board, move, ply, threats);
+                scores[i] = get_quiet_history_score(board, move, ply, threats)
+                          + trial_history_score(board, move, ply);
+                if ((pawn_threats & (1ULL << move.from())) && !(threats & (1ULL << move.to()))) {
+                    const int piece = board.get_piece_at(move.from()) % 6;
+                    if (piece >= KNIGHT && piece <= QUEEN)
+                        scores[i] += 1024;
+                }
             }
         }
     }
 }
 
-// Stateful ordering boundary. The baseline picker deliberately reproduces
-// the former incremental selection-sort order exactly; later stage changes
-// can therefore be measured without also changing the caller's control flow.
+
+#ifdef COCO_TESTING
+int s9_test_order_score(const Board& board, Move move, Move tt_move, U64 threats) {
+    MoveList single;
+    single.moves[0] = move;
+    single.count = 1;
+    int score = 0;
+    order_moves(board, single, tt_move, 0, &score, threats, threats);
+    return score;
+}
+#endif
+
+// Select in place with strict comparisons so equal scores follow the
+// existing selection-sort order.
 class MovePicker {
 public:
-    MovePicker(const Board& board, MoveList& moves, Move tt_move, int ply, U64 threats = 0)
+    MovePicker(const Board& board, MoveList& moves, Move tt_move, int ply, U64 threats, U64 capture_threats)
         : moves_(moves) {
-        order_moves(board, moves_, tt_move, ply, scores_, threats);
+        order_moves(board, moves_, tt_move, ply, scores_, threats, capture_threats);
     }
 
     bool next(Move& move) {
@@ -640,7 +702,6 @@ private:
     int index_ = 0;
 };
 
-// Forward declarations of search functions
 int quiescence(Board& board, int alpha, int beta, int ply);
 
 // Extract Principal Variation (PV) from the Transposition Table
@@ -662,7 +723,6 @@ int get_pv_impl(Board& board, Move* pv_array, int max_pv_depth,
             break;
         }
         
-        // Validate best move legally against the board state
         MoveList list;
         generate_pseudo_legal_moves(board, list);
         bool found = false;
@@ -684,14 +744,13 @@ int get_pv_impl(Board& board, Move* pv_array, int max_pv_depth,
         // A PV ends when the game ends.  TT entries can otherwise form a
         // legal repetition cycle and make GUIs/fastchess report a bogus
         // continuation after the draw has already been reached.
-        if (board.get_halfmove_clock() >= 100 || board.is_repetition()) {
+        if (pv_draw_boundary(board)) {
             break;
         }
         
         key = board.get_hash_key();
     }
     
-    // Restore the board back to the original root state
     for (int i = pv_length - 1; i >= 0; i--) {
         board.unmake_move(pv_array[i]);
     }
@@ -703,17 +762,158 @@ int get_pv(Board& board, Move* pv_array, int max_pv_depth) {
     return get_pv_impl(board, pv_array, max_pv_depth, false);
 }
 
-// Alpha-Beta Search Core with Null Move Pruning (NMP)
+#ifdef COCO_TESTING
+thread_local uint64_t s2_reduced=0, s2_raises=0, s2_verified=0, s2_refuted=0;
+thread_local uint64_t s2_unverified=0, s2_verify_nodes=0;
+#endif
+
+namespace {
+struct MainEvalEntry {
+    U64 key = 0;
+    int score = 0;
+    bool valid = false;
+};
+static_assert(sizeof(MainEvalEntry) == 16);
+constexpr size_t MAIN_EVAL_CACHE_SIZE = 4096;
+thread_local MainEvalEntry main_eval_cache[MAIN_EVAL_CACHE_SIZE];
+thread_local bool main_eval_cache_active = false;
+
+struct ScopedMainEvalCache {
+    ScopedMainEvalCache() {
+        std::fill_n(main_eval_cache, MAIN_EVAL_CACHE_SIZE, MainEvalEntry{});
+        main_eval_cache_active = true;
+    }
+    ~ScopedMainEvalCache() { main_eval_cache_active = false; }
+};
+
+int main_search_eval(const Board& board) {
+    if (!main_eval_cache_active)
+        return Evaluation::evaluate(board);
+
+    const U64 key = board.get_hash_key();
+    auto& entry = main_eval_cache[key & (MAIN_EVAL_CACHE_SIZE - 1)];
+    if (entry.valid && entry.key == key)
+        return entry.score;
+
+    const int score = Evaluation::evaluate(board);
+    entry = {key, score, true};
+    return score;
+}
+}
+
+#ifdef COCO_TESTING
+bool test_s8_cache_contract(Board& board, bool enabled) {
+    const int raw = Evaluation::evaluate(board);
+    const U64 key = board.get_hash_key();
+    auto& slot = main_eval_cache[key & (MAIN_EVAL_CACHE_SIZE - 1)];
+    slot = {key, raw + 1, true};
+    if (!enabled || main_search_eval(board) != raw) return false;
+    {
+        ScopedMainEvalCache root;
+        if (slot.valid || main_search_eval(board) != raw || !slot.valid) return false;
+        slot = {key ^ MAIN_EVAL_CACHE_SIZE, raw + 1, true};
+        if (main_search_eval(board) != raw || slot.key != key) return false;
+        slot.score = raw + 1;
+        if (main_search_eval(board) != raw + 1) return false;
+    }
+    if (main_search_eval(board) != raw) return false;
+    ScopedMainEvalCache next_root;
+    return !slot.valid && main_search_eval(board) == raw;
+}
+#endif
+
+
+namespace {
+struct RfpCorrectionEntry {
+    int16_t value;
+    uint16_t key;
+};
+static_assert(sizeof(RfpCorrectionEntry) == 4);
+thread_local RfpCorrectionEntry rfp_correction[2][4096]{};
+thread_local bool rfp_correction_active = false;
+thread_local U64 rfp_correction_root = 0;
+
+struct ScopedRfpCorrection {
+    explicit ScopedRfpCorrection(U64 root) {
+        std::memset(rfp_correction, 0, sizeof(rfp_correction));
+        rfp_correction_root = root;
+        rfp_correction_active = true;
+    }
+    ~ScopedRfpCorrection() { rfp_correction_active = false; }
+};
+
+int rfp_correction_for(Color side, uint16_t key) {
+    const auto& entry = rfp_correction[side][key & 4095];
+    return entry.key == key ? std::clamp(entry.value * 29 / 256, -24, 0) : 0;
+}
+
+void rfp_correction_learn(Color side, uint16_t key, int error, int depth) {
+    auto& entry = rfp_correction[side][key & 4095];
+    int value = entry.key == key ? entry.value : 0;
+    const int bonus = std::clamp(error * depth / 8, -256, 256);
+    value += bonus - value * std::abs(bonus) / 1024;
+    entry = {static_cast<int16_t>(std::clamp(value, -1024, 1024)), key};
+}
+
+void rfp_correction_observe(const Board& board, int raw, int score, int depth, bool in_check,
+                            Move best, uint8_t bound, Move excluded) {
+    if (!rfp_correction_active || board.get_hash_key() == rfp_correction_root || in_check
+        || !excluded.is_none() || best.is_none() || best.is_capture() || best.is_promotion()
+        || std::abs(score) >= MATE_THRESHOLD)
+        return;
+    if ((bound == HASH_BETA && score <= raw) || (bound == HASH_ALPHA && score >= raw))
+        return;
+    rfp_correction_learn(board.get_side_to_move(), board.get_pawn_key(), score - raw, depth);
+}
+
+bool rfp_cut_allowed(const Board& board, int static_eval, int margin, int beta) {
+    const int headroom = static_eval - margin - beta;
+    if (headroom < 0)
+        return false;
+    if (headroom >= 24 || !rfp_correction_active || std::abs(beta) >= 1500
+        || board.get_halfmove_clock() >= 60)
+        return true;
+    return headroom + rfp_correction_for(board.get_side_to_move(), board.get_pawn_key()) >= 0;
+}
+}
+
+#ifdef COCO_TESTING
+bool s7_rfp_veto_contract() {
+    Board board;
+    board.parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const Color side = board.get_side_to_move();
+    const uint16_t key = board.get_pawn_key();
+    if (!rfp_cut_allowed(board, 70, 70, 0) || rfp_cut_allowed(board, 69, 70, 0))
+        return false;
+    {
+        ScopedRfpCorrection scope(board.get_hash_key());
+        rfp_correction_learn(side, key, -600, 8);
+        if (rfp_correction_for(side, key) != -24 || rfp_cut_allowed(board, 70, 70, 0)
+            || !rfp_cut_allowed(board, 94, 70, 0) || rfp_cut_allowed(board, 69, 70, 0)
+            || rfp_correction_for(side, key ^ 4096) != 0)
+            return false;
+        rfp_correction_learn(side, key ^ 4096, 600, 8);
+        if (rfp_correction_for(side, key) != 0 || rfp_correction_for(side, key ^ 4096) != 0)
+            return false;
+        rfp_correction_learn(side, key, -600, 8);
+    }
+    if (!rfp_cut_allowed(board, 70, 70, 0))
+        return false;
+    ScopedRfpCorrection next(board.get_hash_key());
+    return rfp_correction_for(side, key) == 0 && rfp_cut_allowed(board, 70, 70, 0);
+}
+#endif
+
 int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType node_type, bool in_null_move_search, int parent_eval_1, int parent_eval_2, Move excluded_move, int double_ext) {
     const bool is_pv = node_type == NodeType::PV;
     reset_explicit_pv(ply);
-    // Cooperative search abortion check
-    check_time();
+    check_time(ply == 0);
     if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
     
     // Draw detection (Fifty-move rule and repetition check)
-    if (ply > 0 && (board.get_halfmove_clock() >= 100 || board.is_repetition())) {
-        return draw_score(board);
+    if (ply > 0) {
+        if (board.get_halfmove_clock() >= 100) return rule50_terminal_score(board, ply);
+        if (board.is_repetition()) return draw_score(board);
     }
 
     if (depth <= 0) {
@@ -738,13 +938,13 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         unsigned wdl = probe_wdl(board);
         if (wdl != TB_RESULT_FAILED) {
             Search::thread_stats[active_thread_id].tbhits.fetch_add(1, std::memory_order_relaxed);
-            int tb_score = 0;
+            int tb_score = DRAW_SCORE;
             if (wdl == TB_WIN) {
                 tb_score = VALUE_TB - ply;
             } else if (wdl == TB_CURSED_WIN) {
                 tb_score = 1;
             } else if (wdl == TB_DRAW) {
-                tb_score = 0;
+                tb_score = DRAW_SCORE;
             } else if (wdl == TB_BLESSED_LOSS) {
                 tb_score = -1;
             } else if (wdl == TB_LOSS) {
@@ -765,6 +965,31 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
     }
     
+    int tt_score = 0;
+    uint8_t tt_depth = 0;
+    uint8_t tt_flag = 0;
+    Move tt_move;
+    const bool restricted_root = ply == 0
+        && (root_excluded_count > 0 || root_moves_restricted);
+    const auto probe_tt = [&] {
+        return search_tt().probe_entry(board.get_hash_key(), tt_score, tt_depth, tt_flag, tt_move, ply);
+    };
+    const auto tt_can_cut = [&] {
+        return tt_move != excluded_move && !restricted_root && tt_depth >= depth
+            && (tt_flag == HASH_EXACT
+                || (tt_flag == HASH_ALPHA && tt_score <= alpha)
+                || (tt_flag == HASH_BETA && tt_score >= beta));
+    };
+
+    // Early TT cutoffs follow draw and tablebase checks and exclude special searches.
+    constexpr int decisive_score = VALUE_TB - MAX_PLY;
+    const bool probe_early = ply > 0 && !is_pv && !in_null_move_search
+        && excluded_move.is_none() && Search::mate_limit == 0
+        && board.get_halfmove_clock() + depth < 96
+        && std::abs(alpha) < decisive_score && std::abs(beta) < decisive_score;
+    bool tt_hit = probe_early && probe_tt();
+    if (tt_hit && std::abs(tt_score) < decisive_score && tt_can_cut()) return tt_score;
+
     Color us = board.get_side_to_move();
     Move quiet_moves_searched[64];
     int quiet_count = 0;
@@ -774,7 +999,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     bool in_check = board.is_square_attacked(king_sq, us ^ 1);
 
     // NMP and the later forward-pruning stages share one static evaluation.
-    const int raw_static_eval = Evaluation::evaluate(board);
+    const int raw_static_eval = main_search_eval(board);
     int static_eval = raw_static_eval;
     if (ply < MAX_PLY + 4) search_stack[ply].static_eval = static_eval;
 #ifdef COCO_CORRHIST_PROFILE
@@ -782,9 +1007,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         corrhist_profile_lookup(board, search_stack[ply]);
 #endif
 
-    // Compute improving before any evaluation-based pruning. Checks inherit
-    // the last usable evaluations rather than treating a missing value as an
-    // improvement signal.
+    // Carry usable evaluations through check nodes for later improving tests.
     bool improving = false;
     if (!in_check && parent_eval_2 != INFINITY_SCORE) {
         improving = static_eval > parent_eval_2;
@@ -793,6 +1016,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     int next_parent_eval_1 = in_check ? parent_eval_1 : static_eval;
     int next_parent_eval_2 = in_check ? parent_eval_2 : parent_eval_1;
 
+    bool null_searched = false;
     // Null Move Pruning (NMP)
     if (Search::mate_limit == 0 && depth >= 3 && !is_pv && !in_check && !in_null_move_search
         && excluded_move.is_none() && static_eval >= beta
@@ -800,9 +1024,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         const int minor_count = count_bits(board.get_pieces(us, KNIGHT)
                                           | board.get_pieces(us, BISHOP));
         const bool has_heavy = board.get_pieces(us, ROOK) || board.get_pieces(us, QUEEN);
-        // Pawn-only and lone-minor endings are the classic zugzwang danger
-        // zone. Requiring a heavy piece or two minors is deliberately more
-        // conservative than the old any-non-pawn test.
+        // Guard against zugzwang in pawn-only and lone-minor endings.
         if (has_heavy || minor_count >= 2) {
             const int eval_bonus = std::clamp((static_eval - beta) / 200, 0, 3);
             int R = Search::NMP_Base + (depth / Search::NMP_Divisor) + eval_bonus;
@@ -813,6 +1035,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 search_stack[ply].current_move = Move();
             }
             if (board.make_null_move()) {
+                null_searched = true;
 #ifdef COCO_TESTING
                 if (ply == 0) ++nmp_test_attempts;
 #endif
@@ -829,31 +1052,17 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
     }
     
-    // Probe the Transposition Table
-    int tt_score = 0;
-    uint8_t tt_depth = 0;
-    uint8_t tt_flag = 0;
-    Move tt_move;
-    bool tt_hit = search_tt().probe_entry(board.get_hash_key(), tt_score, tt_depth, tt_flag, tt_move, ply);
-    
-    const bool restricted_root = ply == 0
-        && (root_excluded_count > 0 || root_moves_restricted);
-    if (tt_hit && tt_move != excluded_move && !restricted_root) {
-        if (tt_depth >= depth) {
-            if (tt_flag == HASH_EXACT) {
-                if (ply == 0) root_search_best_move = tt_move;
-                return tt_score;
-            }
-            if (tt_flag == HASH_ALPHA && tt_score <= alpha) {
-                if (ply == 0) root_search_best_move = tt_move;
-                return tt_score;
-            }
-            if (tt_flag == HASH_BETA && tt_score >= beta) {
-                if (ply == 0) root_search_best_move = tt_move;
-                return tt_score;
-            }
-        }
-
+    // A null search can update the table. Refresh the entry in that case.
+    if (!probe_early || null_searched) {
+        tt_score = 0;
+        tt_depth = 0;
+        tt_flag = 0;
+        tt_move = Move();
+        tt_hit = probe_tt();
+    }
+    if (tt_hit && tt_can_cut()) {
+        if (ply == 0) root_search_best_move = tt_move;
+        return tt_score;
     }
     if (tt_move == excluded_move
         || (ply == 0 && (!root_move_is_allowed(tt_move) || root_move_is_excluded(tt_move)))) {
@@ -865,18 +1074,15 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         depth--;
     }
 
-    // Reverse Futility Pruning (RFP) keeps its accepted post-IIR depth
-    // semantics while the strict-order alternative is evaluated separately.
+    // Reverse futility and razoring both use the depth after IIR.
     if (Search::mate_limit == 0 && depth <= 3 && !is_pv && !in_check && excluded_move.is_none()
         && std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int margin = Search::RFP_Margin * depth - (improving ? 35 : 0);
-        if (static_eval - margin >= beta) {
+        if (rfp_cut_allowed(board, static_eval, margin, beta)) {
             return static_eval;
         }
     }
 
-    // Razoring follows RFP with the post-IIR depth, preserving the calibrated
-    // T4 selectivity boundary established by the accepted baseline.
     if (Search::mate_limit == 0 && depth == 1 && !is_pv && !in_check && excluded_move.is_none()
         && alpha > -INFINITY_SCORE + 1000) {
         constexpr int razor_margin = 300;
@@ -888,27 +1094,23 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
     }
 
-    // Capture-only ProbCut. A clearly winning tactical capture is verified
-    // first by qsearch and then by a reduced null-window search. Keeping this
-    // independent of capture-history thresholds gives the next candidate a
-    // clean baseline, while the SEE gate avoids spending work on losing
-    // exchanges. PV, check, excluded-move, and decisive-score nodes are kept
-    // out of this speculative cutoff path.
-    if (Search::mate_limit == 0 && depth >= 5 && !is_pv && !in_check
+    // ProbCut screens captures with SEE and qsearch before the reduced search.
+    const CocoPolicy::ProbCut probcut = CocoPolicy::probcut(improving);
+    if (Search::mate_limit == 0 && depth >= probcut.depth && !is_pv && !in_check
+        && !(probcut.use_tt_veto && tt_hit && tt_score < beta + probcut.margin)
         && excluded_move.is_none() && std::abs(beta) < MATE_SCORE - MAX_PLY) {
-        constexpr int PROBCUT_MARGIN = 200;
-        constexpr int PROBCUT_REDUCTION = 4;
-        const int probcut_beta = std::min(beta + PROBCUT_MARGIN,
+        const int probcut_beta = std::min(beta + probcut.margin,
                                           MATE_SCORE - MAX_PLY - 1);
         const int see_threshold = std::max(0, probcut_beta - static_eval);
         MoveList probcut_moves;
         generate_capture_moves(board, probcut_moves);
-        MovePicker probcut_picker(board, probcut_moves, tt_move, ply);
         LegalityMasks probcut_masks = board.get_legality_masks();
+        MovePicker probcut_picker(board, probcut_moves, tt_move, ply, 0, probcut_masks.threats);
         Move probcut_move;
 
         while (probcut_picker.next(probcut_move)) {
-            if (probcut_move == excluded_move || board.see(probcut_move) < see_threshold
+            if (probcut_move == excluded_move || (probcut.skip_tt_move && probcut_move == tt_move)
+                || board.see(probcut_move) < see_threshold
                 || !board.is_move_legal(probcut_move, probcut_masks)) {
                 continue;
             }
@@ -927,10 +1129,10 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             search_tt().prefetch(board.get_hash_key());
             int probcut_score = -quiescence(board, -probcut_beta,
                                             -probcut_beta + 1, ply + 1);
-            if (probcut_score >= probcut_beta) {
+            if (probcut_score >= probcut_beta && depth > probcut.reduction) {
                 probcut_score = -alpha_beta(
                     board, -probcut_beta, -probcut_beta + 1,
-                    depth - PROBCUT_REDUCTION, ply + 1, NodeType::NON_PV,
+                    std::max(0, depth - probcut.reduction), ply + 1, NodeType::NON_PV,
                     in_null_move_search, next_parent_eval_1, next_parent_eval_2,
                     Move(), double_ext);
             }
@@ -948,7 +1150,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 if (ply == 0) ++probcut_test_cutoffs;
 #endif
                 search_tt().store(board.get_hash_key(), probcut_move,
-                                  probcut_score, depth - PROBCUT_REDUCTION + 1,
+                                  probcut_score, std::max(0, depth - probcut.reduction + 1),
                                   HASH_BETA, ply);
                 return probcut_score;
             }
@@ -959,7 +1161,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     if (tt_move.is_none() && depth >= 4 && !in_check && is_pv) {
         int iid_depth = depth - 2;
         alpha_beta(board, alpha, beta, iid_depth, ply, node_type, in_null_move_search, parent_eval_1, parent_eval_2, excluded_move, double_ext);
-        // Time-abort check: immediately return 0 and skip probing the TT to prevent move pollution
+        // A canceled IID search may leave a partial TT move.
         if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
         int dummy_score;
         search_tt().probe(board.get_hash_key(), dummy_score, tt_move, 0, -INFINITY_SCORE, INFINITY_SCORE, ply);
@@ -974,7 +1176,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         generate_evasion_moves(board, move_list);
     else
         generate_pseudo_legal_moves(board, move_list);
-    MovePicker move_picker(board, move_list, tt_move, ply, masks.threats);
+    MovePicker move_picker(board, move_list, tt_move, ply, masks.threats, masks.threats);
     
     int legal_moves_count = 0;
     int best_score = -INFINITY_SCORE;
@@ -992,7 +1194,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
         
         // Late Move Pruning (LMP)
-        if (Search::mate_limit == 0 && !move.is_capture() && !move.is_promotion()) {
+        if (CocoPolicy::profile != CocoPolicy::Profile::Pawnstar
+            && Search::mate_limit == 0 && !move.is_capture() && !move.is_promotion()) {
             if (depth <= 3 && !is_pv && !in_check) {
                 bool from_threatened = masks.threats & (1ULL << move.from());
                 if (!from_threatened) {  // Only prune non-escaping moves
@@ -1005,8 +1208,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
         
         // Move-Level Futility Pruning
-        // Strictly disabled if alpha is near a checkmate score to prevent mate-blindness tactical leaks
-        if (Search::mate_limit == 0 && depth <= 2 && !in_check
+        // Preserve moves that can change the mate distance.
+        if (Search::mate_limit == 0 && moves_searched > 0 && depth <= 2 && !in_check
             && !move.is_capture() && !move.is_promotion()) {
             bool from_threatened = masks.threats & (1ULL << move.from());
             if (!from_threatened && move != tt_move && 
@@ -1027,7 +1230,6 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             }
         }
 
-        // Symmetrical illegal move filtering
         if (!board.is_move_legal(move, masks)) {
             continue;
         }
@@ -1055,7 +1257,7 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
 
         // Singular Extension Check
         if (ply > 0
-            && depth >= 6 + is_pv
+            && depth >= CocoPolicy::singular_min_depth(is_pv)
             && move == tt_move
             && excluded_move.is_none()
             && tt_hit
@@ -1063,29 +1265,21 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             && tt_flag != HASH_ALPHA
             && std::abs(tt_score) < MATE_THRESHOLD) {
             
-            int singular_margin = depth * (is_pv ? 1 : 2);
+            int singular_margin = CocoPolicy::singular_margin(depth, is_pv);
             int singular_beta = tt_score - singular_margin;
-            int singular_depth = depth / 2;
+            int singular_depth = CocoPolicy::singular_depth(depth);
             
             int singular_score = alpha_beta(board, singular_beta - 1, singular_beta, singular_depth, ply, NodeType::NON_PV, in_null_move_search, parent_eval_1, parent_eval_2, tt_move, double_ext);
             
+            if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
             if (singular_score < singular_beta) {
-                // Move is singular: extend by 1. Double-extend (+2) when it is
-                // strongly singular (verified well below the singular bound) and
-                // only on non-PV nodes, capped to prevent runaway depth inflation.
-                if (!is_pv && double_ext < 6 && singular_score < singular_beta - 2 * depth) {
-                    extension = 2;
-                } else {
-                    extension = 1;
-                }
-            } else if (singular_score >= beta && std::abs(singular_score) < MATE_THRESHOLD) {
-                // Multicut: excluding the TT move still fails high over beta, so
-                // multiple moves compete. Return immediately as a softbound.
-                return singular_score;
+                extension = CocoPolicy::singular_extension(singular_score, singular_beta, depth, is_pv, double_ext);
+            } else if (CocoPolicy::profile != CocoPolicy::Profile::Maelstrom
+                       && singular_score >= beta && std::abs(singular_score) < MATE_THRESHOLD) {
+                return CocoPolicy::multicut_score(singular_score, beta, singular_beta);
             }
         }
 
-        // Propagate cumulative double-extension count along the main search path
         int next_double_ext = double_ext + (extension >= 2 ? 1 : 0);
         
         if (ply < MAX_PLY) {
@@ -1103,14 +1297,27 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         }
         
         const uint64_t root_nodes_before = ply == 0 ? nodes_visited : 0;
+        if (ply == 0 && moves_searched == 0) root_first_search_move = move;
+
+        const bool history_reduction = CocoPolicy::profile == CocoPolicy::Profile::Calvin
+            && depth >= 2 && !move.is_promotion() && moves_searched >= (is_pv ? 4 : 3);
+        const bool pawnstar_reduction = CocoPolicy::profile == CocoPolicy::Profile::Pawnstar
+            && !is_pv && depth > 2 && moves_searched > 3;
+        const int quiet_history_score = history_reduction && !move.is_capture()
+            ? get_quiet_history_score(board, move, ply, masks.threats) : 0;
         board.make_move(move, true);
         search_tt().prefetch(board.get_hash_key());
         legal_moves_count++;
         
-        // Check if this move gives check
         Color them = board.get_side_to_move();
         int them_king_sq = get_lsb(board.get_pieces(them, KING));
         bool gives_check = board.is_square_attacked(them_king_sq, them ^ 1);
+        if (CocoPolicy::profile == CocoPolicy::Profile::Pawnstar && Search::mate_limit == 0 &&
+            !is_pv && !in_check && !gives_check && depth <= 8 && moves_searched > 0 &&
+            !move.is_capture() && !move.is_promotion() && legal_moves_count - 1 >= 3 + depth * depth) {
+            board.unmake_move(move);
+            continue;
+        }
 
         const int new_depth = depth - 1 + extension;
         int score;
@@ -1127,7 +1334,28 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             // at full depth before it can change alpha or produce a cutoff.
             // The existing reduction constants were tuned for non-PV nodes;
             // PV-node LMR is therefore kept disabled until separately tuned.
-            if (depth >= 3 && !move.is_capture() && !move.is_promotion() && !in_check &&
+            if (!in_check && !gives_check && move != tt_move && pawnstar_reduction) {
+                reduction = 1 + (depth > 3 && moves_searched > 6 ? 1 + (moves_searched > 12) : 0);
+            } else if (!in_check && !gives_check && move != tt_move && history_reduction) {
+                reduction = static_cast<int>(0.90 + std::log(depth) * std::log(moves_searched + 1) / 3.10);
+                reduction += !is_pv;
+                reduction -= quiet_history_score / 8192;
+                // Give a late, poorly ranked quiet less initial depth only
+                // when the static score already supports a cutoff.
+                if (ply > 0 && ply < MAX_PLY && !is_pv && depth >= 5
+                    && moves_searched >= 6 && quiet_history_score <= -256
+                    && parent_eval_2 != INFINITY_SCORE && !improving && static_eval >= beta + 64
+                    && !move.is_capture() && !move.is_castling()
+                    && !(masks.threats & ((1ULL << move.from()) | (1ULL << move.to())))
+                    && move != killer_moves[ply][0] && move != killer_moves[ply][1]
+                    && !in_null_move_search && excluded_move.is_none() && Search::mate_limit == 0
+                    && std::abs(alpha) < VALUE_TB - MAX_PLY && std::abs(beta) < VALUE_TB - MAX_PLY
+                    && board.get_halfmove_clock() + new_depth < 96
+                    && reduction > 0 && reduction + 1 < new_depth) {
+                    ++reduction;
+                }
+            } else if (CocoPolicy::profile != CocoPolicy::Profile::Pawnstar && CocoPolicy::profile != CocoPolicy::Profile::Calvin
+                && depth >= 3 && !move.is_capture() && !move.is_promotion() && !in_check &&
                 move != tt_move && !gives_check && moves_searched >= 4 && !is_pv) {
                 
                 int d_idx = std::min(depth, 63);
@@ -1154,15 +1382,58 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 hist_adj = std::max(0, std::min(1, hist_adj));
                 reduction -= hist_adj;
                 
-                reduction = std::clamp(reduction, 0, std::max(0, new_depth - 1));
             }
+            reduction = std::clamp(reduction, 0, std::max(0, new_depth - 1));
 
+#ifdef COCO_TESTING
+            bool s2_was_verified = false;
+#endif
             if (reduction > 0) {
                 score = -alpha_beta(board, -alpha - 1, -alpha,
                                     new_depth - reduction, ply + 1,
                                     NodeType::NON_PV, in_null_move_search,
                                     next_parent_eval_1, next_parent_eval_2,
                                     Move(), next_double_ext);
+#ifdef COCO_TESTING
+                ++s2_reduced;
+                if (score > alpha && !Search::b_abort.load(std::memory_order_relaxed)) ++s2_raises;
+#endif
+                // A promising quiet move can fail low after losing several plies.
+                // Reuse the child's cached static score to justify one extra ply.
+                if (score <= alpha && score >= alpha - 32 && reduction >= 2 && !move.is_capture() && !move.is_promotion()
+                    && main_eval_cache_active && !in_null_move_search && excluded_move.is_none()
+                    && Search::mate_limit == 0 && std::abs(alpha) < MATE_THRESHOLD
+                    && !Search::b_abort.load(std::memory_order_relaxed)) {
+                    const U64 key = board.get_hash_key();
+                    const auto& eval = main_eval_cache[key & (MAIN_EVAL_CACHE_SIZE - 1)];
+                    if (eval.valid && eval.key == key && -eval.score >= alpha
+                        && eval.score + raw_static_eval <= -32) {
+                        score = -alpha_beta(board, -alpha - 1, -alpha,
+                                            new_depth - reduction + 1, ply + 1,
+                                            NodeType::NON_PV, in_null_move_search,
+                                            next_parent_eval_1, next_parent_eval_2,
+                                            Move(), next_double_ext);
+                    }
+                }
+                // Verify a reduced alpha raise at the intended depth before
+                // trusting its cutoff. Keep this null-window confirmation
+                // separate from the existing full-window PV expansion.
+                if (score > alpha && !Search::b_abort.load(std::memory_order_relaxed)) {
+#ifdef COCO_TESTING
+                    ++s2_verified;
+                    s2_was_verified = true;
+                    const uint64_t s2_nodes_before = nodes_visited;
+#endif
+                    score = -alpha_beta(board, -alpha - 1, -alpha,
+                                        new_depth, ply + 1, NodeType::NON_PV,
+                                        in_null_move_search, next_parent_eval_1,
+                                        next_parent_eval_2, Move(), next_double_ext);
+#ifdef COCO_TESTING
+                    s2_verify_nodes += nodes_visited - s2_nodes_before;
+                    if (!Search::b_abort.load(std::memory_order_relaxed) && score <= alpha)
+                        ++s2_refuted;
+#endif
+                }
 
             } else {
                 score = -alpha_beta(board, -alpha - 1, -alpha,
@@ -1171,6 +1442,10 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                                     next_parent_eval_2, Move(), next_double_ext);
             }
             
+#ifdef COCO_TESTING
+            if (reduction > 0 && score >= beta && !s2_was_verified
+                && !Search::b_abort.load(std::memory_order_relaxed)) ++s2_unverified;
+#endif
             // Principal variation search: only a late move that improves alpha
             // inside the PV window needs the expensive full-window re-search.
             if (score > alpha && score < beta) {
@@ -1187,10 +1462,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
             record_root_nodes(move, nodes_visited - root_nodes_before);
         }
         
-        // Safely abort this recursive branch
         if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
         
-        // Record quiet moves that did not trigger a cutoff
         if (score < beta) {
             if (move.is_capture() && capture_count < 64) {
                 capture_moves_searched[capture_count++] = move;
@@ -1210,22 +1483,18 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
         if (score > alpha) {
             alpha = score;
             if (alpha >= beta) {
-                // Store beta cutoff in TT
                 if (excluded_move.is_none()) {
                     if (!restricted_root)
                         search_tt().store(board.get_hash_key(), move, score, depth, HASH_BETA, ply);
                 }
                 
-                // Update killer moves and history heuristic for quiet moves
                 if (excluded_move.is_none() && ply < MAX_PLY) {
                     if (!move.is_capture() && !move.is_promotion()) {
-                        // Update Killer Moves
                         if (killer_moves[ply][0] != move) {
                             killer_moves[ply][1] = killer_moves[ply][0];
                             killer_moves[ply][0] = move;
                         }
                         
-                        // Update History Heuristic Table
                         Color side = board.get_side_to_move();
                         Piece piece_raw = board.get_piece_at(move.from());
                         PieceType piece = (PieceType)(piece_raw % 6);
@@ -1234,25 +1503,27 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                         if (piece < 7) {
                             bool tf = masks.threats & (1ULL << move.from());
                             bool tt = masks.threats & (1ULL << move.to());
-                            update_history(history_table[side][tf][tt][piece][to], depth * depth);
+                            // quiet_count excludes the current cutoff move.
+                            if (depth > 3 || quiet_count > 0) {
+                                update_history(history_table[side][tf][tt][piece][to], depth * depth);
+                                update_trial_history(board, move, ply, depth * depth);
                             
-                            // CMH (ply-1)
-                            if (ply >= 1 && ply - 1 < MAX_PLY) {
-                                const SearchStack& ni1 = search_stack[ply - 1];
-                                if (ni1.piece >= 0 && ni1.piece < 7) {
-                                    update_history(cont_history[0][ni1.piece][ni1.to_sq][piece][to], depth * depth);
+                                if (ply >= 1 && ply - 1 < MAX_PLY) {
+                                    const SearchStack& ni1 = search_stack[ply - 1];
+                                    if (ni1.piece >= 0 && ni1.piece < 7) {
+                                        update_history(cont_history[0][ni1.piece][ni1.to_sq][piece][to], depth * depth);
+                                    }
                                 }
+
+                                if (ply >= 2 && ply - 2 < MAX_PLY) {
+                                    const SearchStack& ni2 = search_stack[ply - 2];
+                                    if (ni2.piece >= 0 && ni2.piece < 7) {
+                                        update_history(cont_history[1][ni2.piece][ni2.to_sq][piece][to], depth * depth);
+                                    }
+                                }
+                            
                             }
 
-                            // FMH (ply-2)
-                            if (ply >= 2 && ply - 2 < MAX_PLY) {
-                                const SearchStack& ni2 = search_stack[ply - 2];
-                                if (ni2.piece >= 0 && ni2.piece < 7) {
-                                    update_history(cont_history[1][ni2.piece][ni2.to_sq][piece][to], depth * depth);
-                                }
-                            }
-                            
-                            // Apply malus loop for unsuccessful quiet moves
                             for (int i = 0; i < quiet_count; i++) {
                                 Move failed_move = quiet_moves_searched[i];
                                 Piece failed_piece_raw = board.get_piece_at(failed_move.from());
@@ -1262,8 +1533,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                                     bool ftf = masks.threats & (1ULL << failed_move.from());
                                     bool ftt = masks.threats & (1ULL << failed_move.to());
                                     update_history(history_table[side][ftf][ftt][failed_piece][failed_to_sq], -(depth * depth));
+                                    update_trial_history(board, failed_move, ply, -(depth * depth));
                                     
-                                    // CMH malus
                                     if (ply >= 1 && ply - 1 < MAX_PLY) {
                                         const SearchStack& ni1 = search_stack[ply - 1];
                                         if (ni1.piece >= 0 && ni1.piece < 7) {
@@ -1271,7 +1542,6 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                                         }
                                     }
 
-                                    // FMH malus
                                     if (ply >= 2 && ply - 2 < MAX_PLY) {
                                         const SearchStack& ni2 = search_stack[ply - 2];
                                         if (ni2.piece >= 0 && ni2.piece < 7) {
@@ -1282,7 +1552,6 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                             }
                         }
                     } else if (move.is_capture()) {
-                        // Capture History Update
                         Piece piece_raw = board.get_piece_at(move.from());
                         int moved_piece = piece_raw;
                         int to = move.to();
@@ -1291,10 +1560,9 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                             victim = board.get_piece_at(move.to()) % 6;
                         }
                         
-                        if (moved_piece < 12 && victim < 6) {
-                            update_history(capture_history[moved_piece][to][victim], depth * depth);
+                        if (moved_piece >= 0 && moved_piece < 12 && victim >= 0 && victim < 6) {
+                            update_history(capture_history[moved_piece][to][bool(masks.threats & (1ULL << to))][victim], depth * depth);
                             
-                            // Apply malus loop for unsuccessful capture moves
                             for (int i = 0; i < capture_count; i++) {
                                 Move failed_move = capture_moves_searched[i];
                                 Piece failed_piece_raw = board.get_piece_at(failed_move.from());
@@ -1304,8 +1572,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                                 if (!failed_move.is_en_passant()) {
                                     failed_victim = board.get_piece_at(failed_to_sq) % 6;
                                 }
-                                if (failed_moved_piece < 12 && failed_victim < 6) {
-                                    update_history(capture_history[failed_moved_piece][failed_to_sq][failed_victim], -(depth * depth));
+                                if (failed_moved_piece >= 0 && failed_moved_piece < 12 && failed_victim >= 0 && failed_victim < 6) {
+                                    update_history(capture_history[failed_moved_piece][failed_to_sq][bool(masks.threats & (1ULL << failed_to_sq))][failed_victim], -(depth * depth));
                                 }
                             }
                         }
@@ -1313,6 +1581,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                 }
                 
                 if (ply == 0) root_search_best_move = move;
+                rfp_correction_observe(board, raw_static_eval, score, depth, in_check,
+                                       move, HASH_BETA, excluded_move);
 #ifdef COCO_CORRHIST_PROFILE
                 if (ply < MAX_PLY + 4)
                     corrhist_profile_update(board, search_stack[ply],
@@ -1327,16 +1597,18 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     
     // Terminal position detection
     if (legal_moves_count == 0) {
+        // An exclusion search with no alternative fails low at its bound.
+        if (!excluded_move.is_none())
+            return alpha_orig;
+
         if (in_check) {
             // Checkmate: score depends on distance from root (prefers shorter mates)
             return -MATE_SCORE + ply;
         } else {
-            // Stalemate
             return draw_score(board);
         }
     }
     
-    // Save search result in Transposition Table
     uint8_t flag = HASH_EXACT;
     if (best_score <= alpha_orig) {
         flag = HASH_ALPHA;
@@ -1347,6 +1619,8 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
                                 best_score, depth, in_check,
                                 best_move_in_node, flag, excluded_move);
 #endif
+    rfp_correction_observe(board, raw_static_eval, best_score, depth, in_check,
+                           best_move_in_node, flag, excluded_move);
     if (ply == 0) root_search_best_move = best_move_in_node;
     if (excluded_move.is_none() && !restricted_root) {
         search_tt().store(board.get_hash_key(), best_move_in_node, best_score, depth, flag, ply);
@@ -1355,15 +1629,16 @@ int alpha_beta(Board& board, int alpha, int beta, int depth, int ply, NodeType n
     return best_score;
 }
 
-// Quiescence Search
 int quiescence(Board& board, int alpha, int beta, int ply) {
     const bool is_pv = beta - alpha > 1;
     reset_explicit_pv(ply);
     check_time();
     if (Search::b_abort.load(std::memory_order_relaxed)) return 0;
 
-    if (ply > 0 && (board.get_halfmove_clock() >= 100 || board.is_repetition()))
-        return draw_score(board);
+    if (ply > 0) {
+        if (board.get_halfmove_clock() >= 100) return rule50_terminal_score(board, ply);
+        if (board.is_repetition()) return draw_score(board);
+    }
 
     nodes_visited++;
     if (ply > max_ply_reached) {
@@ -1403,9 +1678,9 @@ int quiescence(Board& board, int alpha, int beta, int ply) {
     MoveList move_list;
     if (in_check) generate_evasion_moves(board, move_list);
     else generate_noisy_moves(board, move_list);
-    MovePicker move_picker(board, move_list, tt_move, ply);
-    
     LegalityMasks masks = board.get_legality_masks();
+    // Preserve the existing zero quiet-history mask for check evasions.
+    MovePicker move_picker(board, move_list, tt_move, ply, 0, masks.threats);
     int moves_searched = 0;
     Move best_move;
 
@@ -1475,6 +1750,12 @@ namespace Search {
     uint64_t target_time = 0;
     uint64_t soft_limit = 0;
     uint64_t hard_limit = 0;
+    static bool uses_game_clock = false;
+    static CocoPolicy::GameClock game_clock;
+
+    void reset_game_clock() {
+        game_clock = {};
+    }
     std::atomic<bool> b_abort{false};
     std::atomic<bool> pondering{false};
     std::atomic<int> active_helpers{0};
@@ -1601,10 +1882,10 @@ namespace Search {
         soft_limit = std::min(requested_soft, hard_limit);
     }
 
-    // Compute time controls from clock parameters (called before thread launch)
-    void compute_time_controls(Color side, const Limits& limits) {
+    void compute_time_controls(Color side, const Limits& limits, int game_ply) {
         soft_limit = 0;
         hard_limit = 0;
+        uses_game_clock = false;
         target_time = 0;
         node_limit = limits.nodes;
         mate_limit = limits.mate;
@@ -1626,7 +1907,11 @@ namespace Search {
             int my_inc = (side == WHITE) ? limits.winc : limits.binc;
 
             if (my_time > 0) {
-                allocate_time(my_time, my_inc, limits.movestogo);
+                const auto allocation = CocoPolicy::allocate_clock(my_time, my_inc, limits.movestogo,
+                    game_ply, std::max(0, Move_Overhead), Ponder, game_clock);
+                soft_limit = static_cast<uint64_t>(allocation.soft);
+                hard_limit = static_cast<uint64_t>(allocation.hard);
+                uses_game_clock = true;
                 target_time = start_time.load(std::memory_order_relaxed) + hard_limit;
             } else if (my_time == 0) {
                 allocate_time(my_time, my_inc, limits.movestogo);
@@ -1645,7 +1930,9 @@ namespace Search {
                             : node_limit <= 16384 ? 15
                             : 127;
         } else if (hard_limit > 0) {
-            if (hard_limit < 100) {
+            if (hard_limit <= 50) {
+                time_check_mask = 15;
+            } else if (hard_limit <= 250) {
                 time_check_mask = 127;
             } else if (hard_limit < 500) {
                 time_check_mask = 511;
@@ -1705,6 +1992,7 @@ namespace Search {
         }
         std::memset(history_table, 0, sizeof(history_table));
         std::memset(cont_history, 0, sizeof(cont_history));
+        std::memset(four_ply_history, 0, sizeof(four_ply_history));
         std::memset(capture_history, 0, sizeof(capture_history));
         for (int i = 0; i < MAX_PLY + 4; ++i)
             search_stack[i] = SearchStack{};
@@ -1724,8 +2012,10 @@ namespace Search {
             std::this_thread::yield();
     }
 
-    // Master search control loop with Iterative Deepening (main thread only)
     void search_position(Board& board, int max_depth) {
+        RavagerEval::SearchScope ravager_scope(board);
+        ScopedMainEvalCache main_eval_scope;
+        ScopedRfpCorrection rfp_scope(board.get_hash_key());
         // These counters describe the whole search, not only the latest
         // iterative-deepening pass.  Reset them once at the entry point.
         nodes_visited = 0;
@@ -1741,23 +2031,24 @@ namespace Search {
         corrhist_profile_begin_search();
 #endif
 
-        // Reset killer moves and history table at start of search
         for (int i = 0; i < MAX_PLY; ++i) {
             killer_moves[i][0] = Move();
             killer_moves[i][1] = Move();
         }
         std::memset(history_table, 0, sizeof(history_table));
         std::memset(cont_history, 0, sizeof(cont_history));
+        std::memset(four_ply_history, 0, sizeof(four_ply_history));
         std::memset(capture_history, 0, sizeof(capture_history));
         for (int i = 0; i < MAX_PLY + 4; ++i) {
             search_stack[i] = SearchStack{};
         }
-        // Count legal moves at the root
         int num_legal_moves = 0;
+        Move fallback_move;
         MoveList root_list;
         generate_pseudo_legal_moves(board, root_list);
         for (int i = 0; i < root_list.count; i++) {
             if (root_move_is_allowed(root_list.moves[i]) && board.make_move(root_list.moves[i])) {
+                if (num_legal_moves == 0) fallback_move = root_list.moves[i];
                 num_legal_moves++;
                 board.unmake_move(root_list.moves[i]);
             }
@@ -1791,28 +2082,44 @@ namespace Search {
             
             unsigned res = tb_probe_root(white, black, kings, queens, rooks, bishops, knights, pawns, rule50, 0, ep, turn, results);
             if (res != TB_RESULT_FAILED && res != TB_RESULT_CHECKMATE && res != TB_RESULT_STALEMATE) {
+                const LegalityMasks masks = board.get_legality_masks();
+                auto allowed_tablebase_move = [&](Move move) {
+                    return root_move_is_allowed(move)
+                        && std::find(root_list.moves, root_list.moves + root_list.count, move)
+                               != root_list.moves + root_list.count
+                        && board.is_move_legal(move, masks);
+                };
                 Move tb_move = fathom_to_coco_move(board, res);
-                bool is_legal = false;
-                LegalityMasks masks = board.get_legality_masks();
-                for (int i = 0; i < root_list.count; i++) {
-                    if (root_list.moves[i] == tb_move && root_move_is_allowed(tb_move)
-                        && board.is_move_legal(tb_move, masks)) {
-                        is_legal = true;
-                        break;
+                if (root_moves_restricted && !allowed_tablebase_move(tb_move)) {
+                    res = TB_RESULT_FAILED;
+                    for (const unsigned alternative : results) {
+                        if (alternative == TB_RESULT_FAILED) break;
+                        const Move move = fathom_to_coco_move(board, alternative);
+                        if (!allowed_tablebase_move(move)) continue;
+
+                        const auto wdl = TB_GET_WDL(alternative);
+                        const auto dtz = TB_GET_DTZ(alternative);
+                        if (res == TB_RESULT_FAILED || wdl > TB_GET_WDL(res)
+                            || (wdl == TB_GET_WDL(res)
+                                && ((wdl > TB_DRAW && dtz < TB_GET_DTZ(res))
+                                    || (wdl < TB_DRAW && dtz > TB_GET_DTZ(res))))) {
+                            res = alternative;
+                            tb_move = move;
+                        }
                     }
                 }
-                
-                if (is_legal) {
+
+                if (res != TB_RESULT_FAILED && allowed_tablebase_move(tb_move)) {
                     thread_stats[0].tbhits.fetch_add(1, std::memory_order_relaxed);
                     unsigned wdl = TB_GET_WDL(res);
                     unsigned dtz = TB_GET_DTZ(res);
-                    int tb_score = 0;
+                    int tb_score = DRAW_SCORE;
                     if (wdl == TB_WIN) {
                         tb_score = VALUE_TB - dtz - rule50;
                     } else if (wdl == TB_CURSED_WIN) {
                         tb_score = 1;
                     } else if (wdl == TB_DRAW) {
-                        tb_score = 0;
+                        tb_score = DRAW_SCORE;
                     } else if (wdl == TB_BLESSED_LOSS) {
                         tb_score = -1;
                     } else if (wdl == TB_LOSS) {
@@ -1933,21 +2240,12 @@ namespace Search {
                     && soft_limit != 0 && elapsed > soft_limit) break;
             }
 
-            Move best_move;
+            Move best_move = fallback_move;
             Move ponder_move;
             if (!completed_lines.empty()) {
                 best_move = completed_lines.front().move;
                 if (completed_lines.front().pv.size() > 1)
                     ponder_move = completed_lines.front().pv[1];
-            } else {
-                LegalityMasks masks = board.get_legality_masks();
-                for (int i = 0; i < root_list.count; ++i) {
-                    if (root_move_is_allowed(root_list.moves[i])
-                        && board.is_move_legal(root_list.moves[i], masks)) {
-                        best_move = root_list.moves[i];
-                        break;
-                    }
-                }
             }
 
             while (pondering.load(std::memory_order_relaxed)
@@ -1967,18 +2265,30 @@ namespace Search {
         Move last_completed_ponder_move;
         Move previous_best_move = Move();
         int best_move_stability_count = 0;
+        int score_stability_count = 0;
+        bool all_moves_stable = true;
+        int lowest_score = INFINITY_SCORE;
+        int highest_score = -INFINITY_SCORE;
+        const bool pz61_clock = uses_game_clock && CocoPolicy::profile == CocoPolicy::Profile::PZ61;
+        const int initial_eval = pz61_clock ? Evaluation::evaluate(board) : 0;
+        const auto root_side = board.get_side_to_move();
+        const bool root_in_check = pz61_clock &&
+            board.is_square_attacked(get_lsb(board.get_pieces(root_side, KING)), root_side ^ 1);
+        double time_reduction = 1;
+        uint64_t previous_soft_limit = soft_limit;
+        bool completed_iteration = false;
         
         int target_depth = max_depth;
         int last_score = 0;
 
-        // Iterative Deepening loop
         for (int current_depth = 1; current_depth <= target_depth; ++current_depth) {
             int score = 0;
 
-            if (current_depth < 3) {
+            const auto aspiration = CocoPolicy::aspiration(last_score);
+            if (current_depth < aspiration.depth) {
                 score = alpha_beta(board, -INFINITY_SCORE, INFINITY_SCORE, current_depth, 0, NodeType::PV, false);
             } else {
-                int delta = Aspiration_Delta;
+                int delta = aspiration.delta;
                 int alpha = std::max(last_score - delta, -INFINITY_SCORE);
                 int beta = std::min(last_score + delta, INFINITY_SCORE);
                 
@@ -1995,17 +2305,15 @@ namespace Search {
                     }
                     
                     if (score <= alpha) {
-                        widen_aspiration_window(score, alpha, beta, delta, true);
+                        widen_donor_window(score, last_score, alpha, beta, delta, true);
                     } else if (score >= beta) {
-                        widen_aspiration_window(score, alpha, beta, delta, false);
+                        widen_donor_window(score, last_score, alpha, beta, delta, false);
                     } else {
-                        // Score is within bounds, search succeeded
                         break;
                     }
                 }
             }
             
-            // Check if we aborted mid-depth
             if (b_abort.load(std::memory_order_relaxed)) {
                 break;
             }
@@ -2027,59 +2335,56 @@ namespace Search {
             } else if (!root_search_best_move.is_none()) {
                 last_completed_best_move = root_search_best_move;
             }
-            if (pv_len > 1) {
-                last_completed_ponder_move = pv[1];
-            }
+            last_completed_ponder_move = pv_len > 1 ? pv[1] : Move();
             publish_completed_result(0, last_completed_best_move, score, current_depth);
 
-            // Track stability of the best move
             Move current_best_move = last_completed_best_move;
             if (current_depth > 1) {
                 if (!current_best_move.is_none() && !previous_best_move.is_none() && current_best_move == previous_best_move) {
                     best_move_stability_count++;
                 } else {
                     best_move_stability_count = 0;
+                    all_moves_stable = false;
                 }
+                score_stability_count = std::abs(score - last_score) <= 10 ? score_stability_count + 1 : 0;
             }
             previous_best_move = current_best_move;
 
-            // Calculate dynamic time multiplier
-            double time_multiplier = 1.0;
-            if (current_depth >= 5) {
-                if (best_move_stability_count >= 3) {
-                    time_multiplier *= 0.65; // Best move highly stable: reduce time by 35%
-                } else if (best_move_stability_count >= 2) {
-                    time_multiplier *= 0.80; // Best move stable: reduce time by 20%
-                } else if (best_move_stability_count == 0) {
-                    time_multiplier *= 1.40; // Best move changed: think 40% longer
-                }
-
-                if (score < last_score - 30) {
-                    time_multiplier *= 1.35; // Score dropping: think 35% longer
-                }
-
+            const int previous_score = last_score;
+            const bool all_scores_stable = score - lowest_score <= 50 && highest_score - score <= 50;
+            lowest_score = std::min(lowest_score, score);
+            highest_score = std::max(highest_score, score);
+            uint64_t adjusted_soft_limit = soft_limit;
+            if (uses_game_clock) {
                 const uint64_t accounted_root_nodes = root_nodes_total();
                 const uint64_t best_root_nodes = current_best_move.is_none()
                     ? 0 : root_nodes_for_move(current_best_move);
-                time_multiplier *= root_node_fraction_multiplier(
-                    best_root_nodes, accounted_root_nodes);
-            }
-
-            uint64_t adjusted_soft_limit = soft_limit;
-            if (soft_limit > 0) {
-                adjusted_soft_limit = static_cast<uint64_t>(soft_limit * time_multiplier);
-                // Prevent over-pruning or exceeding hard limit bounds
-                adjusted_soft_limit = std::max(adjusted_soft_limit, static_cast<uint64_t>(soft_limit * 0.3));
-                adjusted_soft_limit = std::min(adjusted_soft_limit, hard_limit);
+                const double fraction = accounted_root_nodes
+                    ? static_cast<double>(best_root_nodes) / accounted_root_nodes : 0.0;
+                const bool quiet_best = !root_in_check && !current_best_move.is_none()
+                    && !current_best_move.is_capture() && !current_best_move.is_promotion();
+                const CocoPolicy::RootIteration root{current_depth, score, previous_score, initial_eval,
+                    best_move_stability_count, score_stability_count, all_moves_stable,
+                    all_scores_stable, quiet_best, current_best_move == root_first_search_move,
+                    root_node_stat_count == 1, accounted_root_nodes, fraction};
+                const double multiplier = CocoPolicy::soft_multiplier(root, game_clock, time_reduction);
+                double target = soft_limit * multiplier;
+                if (root.single_move && (CocoPolicy::profile == CocoPolicy::Profile::Stockfish18 ||
+                                         CocoPolicy::profile == CocoPolicy::Profile::Stockfish19))
+                    target = std::min(target, CocoPolicy::profile == CocoPolicy::Profile::Stockfish19 ? 500.0 : 502.0);
+                adjusted_soft_limit = static_cast<uint64_t>(std::clamp(target, 1.0, double(hard_limit)));
+                if (CocoPolicy::profile == CocoPolicy::Profile::Rice || CocoPolicy::profile == CocoPolicy::Profile::Maelstrom) {
+                    std::swap(adjusted_soft_limit, previous_soft_limit);
+                    adjusted_soft_limit = std::min(adjusted_soft_limit, hard_limit);
+                }
             }
 
             last_score = score;
+            completed_iteration = true;
 
-            // Update thread 0 stats
             thread_stats[0].nodes.store(nodes_visited, std::memory_order_relaxed);
             thread_stats[0].seldepth.store(max_ply_reached, std::memory_order_relaxed);
 
-            // Aggregate metrics across all threads
             uint64_t total_nodes = 0;
             int total_seldepth = max_ply_reached;
             for (int t = 0; t < num_threads; t++) {
@@ -2092,7 +2397,6 @@ namespace Search {
             uint64_t elapsed = get_time_ms() - start_time.load(std::memory_order_relaxed);
             uint64_t nps = elapsed > 0 ? (total_nodes * 1000) / elapsed : total_nodes * 1000;
 
-            // Print standardized UCI info line
             std::cout << "info depth " << current_depth << " seldepth " << total_seldepth << " ";
 
             print_uci_score(score);
@@ -2113,20 +2417,15 @@ namespace Search {
                 break;
             }
         }
-        
-        // Fallback: if search aborted before completion of depth 1, select first legal move
-        if (last_completed_best_move.is_none()) {
-            MoveList list;
-            generate_pseudo_legal_moves(board, list);
-            for (int i = 0; i < list.count; i++) {
-                if (root_move_is_allowed(list.moves[i]) && board.make_move(list.moves[i])) {
-                    last_completed_best_move = list.moves[i];
-                    board.unmake_move(list.moves[i]);
-                    break;
-                }
-            }
+        if (uses_game_clock && completed_iteration) {
+            game_clock.previous_time_reduction = time_reduction;
+            game_clock.previous_score = last_score;
+            game_clock.have_score = true;
         }
         
+        if (last_completed_best_move.is_none())
+            last_completed_best_move = fallback_move;
+
         while (pondering.load(std::memory_order_relaxed)
                && !b_abort.load(std::memory_order_relaxed))
             std::this_thread::yield();
@@ -2141,7 +2440,7 @@ namespace Search {
                 last_completed_ponder_move = Move();
                 if (board.make_move(voted_move, true)) {
                     Move tail[1];
-                    if (get_pv(board, tail, 1) > 0)
+                    if (!pv_draw_boundary(board) && get_pv(board, tail, 1) > 0)
                         last_completed_ponder_move = tail[0];
                     board.unmake_move(voted_move);
                 }
@@ -2168,7 +2467,6 @@ namespace Search {
                       << " tbhits " << aggregate_tbhits() << "\n";
         }
 
-        // Report final best move designation to GUI
 #ifdef COCO_CORRHIST_PROFILE
         corrhist_profile_print();
 #endif
@@ -2179,8 +2477,8 @@ namespace Search {
         std::cout << std::flush;
     }
 
-    // Helper thread search entry point (threads 1..N-1)
     void search_helper(Board& board, int max_depth, int thread_id) {
+        RavagerEval::SearchScope ravager_scope(board);
         nodes_visited = 0;
         max_ply_reached = 0;
         active_thread_id = thread_id;
@@ -2190,13 +2488,13 @@ namespace Search {
             return;
         }
 
-        // Clear thread-local killer moves and history table
         for (int i = 0; i < MAX_PLY; ++i) {
             killer_moves[i][0] = Move();
             killer_moves[i][1] = Move();
         }
         std::memset(history_table, 0, sizeof(history_table));
         std::memset(cont_history, 0, sizeof(cont_history));
+        std::memset(four_ply_history, 0, sizeof(four_ply_history));
         std::memset(capture_history, 0, sizeof(capture_history));
         for (int i = 0; i < MAX_PLY + 4; ++i) {
             search_stack[i] = SearchStack{};
@@ -2212,11 +2510,12 @@ namespace Search {
         for (int current_depth = start_depth; current_depth <= target_depth; ++current_depth) {
             int score = 0;
 
-            if (current_depth < 3) {
+            const auto aspiration = CocoPolicy::aspiration(last_score);
+            if (current_depth < aspiration.depth) {
                 score = alpha_beta(board, -INFINITY_SCORE, INFINITY_SCORE, current_depth, 0, NodeType::PV, false);
             } else {
                 // Vary aspiration delta by thread to avoid synchronized fail-highs/lows
-                int delta = Aspiration_Delta + (thread_id % 4) * 4;
+                int delta = aspiration.delta + (thread_id % 4) * 4;
                 int alpha = std::max(last_score - delta, -INFINITY_SCORE);
                 int beta = std::min(last_score + delta, INFINITY_SCORE);
 
@@ -2228,16 +2527,15 @@ namespace Search {
                     if (b_abort.load(std::memory_order_relaxed)) break;
 
                     if (score <= alpha) {
-                        widen_aspiration_window(score, alpha, beta, delta, true);
+                        widen_donor_window(score, last_score, alpha, beta, delta, true);
                     } else if (score >= beta) {
-                        widen_aspiration_window(score, alpha, beta, delta, false);
+                        widen_donor_window(score, last_score, alpha, beta, delta, false);
                     } else {
                         break;
                     }
                 }
             }
 
-            // Update per-thread stats
             thread_stats[thread_id].nodes.store(nodes_visited, std::memory_order_relaxed);
             thread_stats[thread_id].seldepth.store(max_ply_reached, std::memory_order_relaxed);
 

@@ -2,6 +2,62 @@
 
 All notable changes to the Coco Chess Engine will be documented in this file.
 
+## [2.0.0]
+
+### Added
+
+- Chess960 / Fischer Random support, including rook-origin castling rights,
+  legal castling, position hashing and `UCI_Chess960` move encoding.
+- Ravager v3 evaluation, with the original CC0 network embedded in
+  the executable. Its features include mirrored king buckets, threat and
+  pawn-pair inputs, and material output buckets. Thanks to erensh27 for the
+  network and evaluator. See [third-party notices](third_party/NOTICES.md).
+
+### Changed
+
+- Selected the tested Coco search and clock configuration with Calvin-informed
+  aspiration, reduction and time-allocation rules.
+- Reuse valid transposition-table cutoffs earlier and use four-ply
+  continuation history to order quiet moves. Add targeted late-move
+  reductions and restore depth when a heavily reduced line merits another look.
+- Simplified the public UCI interface to ten controls, including `UCI_Chess960`.
+- Stored the selected weights as `networks/coco.nnue`, preserving their original
+  bytes and SHA-256. Builds verify the network against `release.json`.
+- Consolidated build and CI tools under `scripts/`. Development notes, old
+  experiment fixtures and training work remain in the local development workspace.
+
+### Fixed
+
+- Stop principal-variation reporting at a draw boundary and clear stale ponder
+  replies, with local search-parity verification.
+- Reserve more time when the clock is low. Play the last completed best
+  move, or a legal fallback if the first depth cannot finish.
+
+### Local validation
+
+| Windows AVX2 comparison against Coco v1.5.1 | Games | Wins | Losses | Draws | Score | Coco 2.0 time losses |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before the low-clock fix | 1,000 | 966 | 6 | 28 | 98.00% | 5 |
+| After the low-clock fix | 24 | 22 | 0 | 2 | 95.83% | 0 |
+
+Both runs used standard chess at 10+0.1, reversed colors for each opening,
+one thread per engine, and eight concurrent games. The 1,000-game run measured
+an observed head-to-head difference of +676 Elo (approximate paired 95%
+interval +619 to +761), specific to this matchup and setup. The follow-up
+replayed the four opening pairs that produced clock losses and added eight
+more pairs. It was a timing check.
+
+In a separate stressed clock replay, the original build missed 19 of 576
+deadlines. The patched build met all 576. The Windows Chess960
+compatibility checks covered all 960 starts, castling and UCI move encoding.
+
+## [1.5.1]
+
+### Fixed
+
+- Embedded-network loading when starting the engine from a chess GUI or a
+  working directory outside the executable's folder.
+
 ## [1.5.0] — 2026-09-14
 
 ### Added

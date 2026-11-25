@@ -12,6 +12,13 @@
 #endif
 
 
+// Search score bands shared by search, UCI reporting and the transposition table.
+inline constexpr int DRAW_SCORE = 0;
+inline constexpr int VALUE_TB = 28000;
+inline constexpr int MATE_THRESHOLD = 29000;
+inline constexpr int MATE_SCORE = 30000;
+static_assert(DRAW_SCORE < VALUE_TB && VALUE_TB < MATE_THRESHOLD && MATE_THRESHOLD < MATE_SCORE);
+
 // Maximum number of search threads for Lazy SMP
 constexpr int MAX_THREADS = 256;
 

@@ -1,6 +1,7 @@
 #include "uci.h"
 #include "types.h"
 #include "board.h"
+#include "ravager_eval.h"
 #include "movegen.h"
 #include "search.h"
 #include "tt.h"
@@ -8,6 +9,7 @@
 #include "nnue.h"
 #include "tbprobe.h"
 #include "build_info.h"
+#include "search_policy.h"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -68,7 +70,6 @@ static std::string compiled_isa() {
 // Worker thread pool for background search
 std::vector<std::thread> worker_threads;
 
-// Recursive Perft function
 uint64_t perft(int depth, Board &board)
 {
     MoveList move_list;
@@ -156,7 +157,6 @@ static inline uint64_t get_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
-// Stop the background search
 void stop_search()
 {
     Search::b_abort.store(true, std::memory_order_relaxed);
@@ -171,8 +171,7 @@ void stop_search()
     worker_threads.clear();
 }
 
-// Start search in background thread pool (Lazy SMP)
-void start_search(Board &board, const Search::Limits &limits)
+void start_search(Board &board, const Search::Limits &limits, uint64_t received_at)
 {
     stop_search();
 
@@ -181,14 +180,12 @@ void start_search(Board &board, const Search::Limits &limits)
     // Pre-register every helper so the main thread can safely wait even when
     // it finishes before an operating-system worker has begun executing.
     Search::active_helpers.store(Search::num_threads - 1, std::memory_order_relaxed);
-    Search::start_time.store(get_time_ms(), std::memory_order_relaxed);
+    Search::start_time.store(received_at, std::memory_order_relaxed);
 
-    // Compute time controls from clock parameters BEFORE thread launch
-    Search::compute_time_controls(board.get_side_to_move(), limits);
+    Search::compute_time_controls(board.get_side_to_move(), limits, board.get_game_ply());
     Search::set_root_moves(limits.searchmoves, limits.searchmoves_specified);
     Search::reset_root_node_accounting(board);
 
-    // Reset per-thread stats
     for (int i = 0; i < Search::num_threads; i++) {
         Search::thread_stats[i].nodes.store(0, std::memory_order_relaxed);
         Search::thread_stats[i].tbhits.store(0, std::memory_order_relaxed);
@@ -215,7 +212,6 @@ void start_search(Board &board, const Search::Limits &limits)
     }
 }
 
-// Parse PGN/UCI move string
 Move parse_move_string(const std::string &move_str, const Board &board)
 {
     MoveList list;
@@ -264,7 +260,6 @@ Move parse_move_string(const std::string &move_str, const Board &board)
     return Move();
 }
 
-// UCI Position Command Parser
 bool parse_position(const std::string &input, Board &board)
 {
     std::istringstream iss(input);
@@ -279,7 +274,6 @@ bool parse_position(const std::string &input, Board &board)
         token.clear();
         if (iss >> token && token == "moves")
         {
-            // Found "moves" token
         }
     }
     else if (token == "fen")
@@ -296,7 +290,7 @@ bool parse_position(const std::string &input, Board &board)
     }
 
     Board candidate;
-    if (!candidate.parse_fen(fen))
+    if (!candidate.parse_fen(fen, board.is_chess960()))
         return false;
 
     if (token == "moves")
@@ -322,9 +316,9 @@ bool parse_position(const std::string &input, Board &board)
     return true;
 }
 
-// UCI Go Command Parser
 void parse_go(const std::string &input, Board &board)
 {
+    const uint64_t received_at = get_time_ms();
     std::istringstream iss(input);
     std::string token;
     iss >> token; // Skip "go"
@@ -394,7 +388,7 @@ void parse_go(const std::string &input, Board &board)
     if (limits.mate > 0)
         limits.depth = std::min(limits.depth, std::min(64, limits.mate * 2));
 
-    start_search(board, limits);
+    start_search(board, limits, received_at);
 }
 
 // Run a standardized benchmark over 5 positions to depth 10
@@ -423,12 +417,11 @@ void run_benchmark()
 
         std::cout << "Benchmarking position " << (i + 1) << "..." << std::endl;
 
-        // Run search synchronously to depth 10
         Search::b_abort.store(false, std::memory_order_relaxed);
         Search::start_time.store(get_time_ms(), std::memory_order_relaxed);
         Search::Limits limits;
         limits.depth = 10;
-        Search::compute_time_controls(b->get_side_to_move(), limits);
+        Search::compute_time_controls(b->get_side_to_move(), limits, b->get_game_ply());
         Search::set_root_moves({}, false);
         Search::reset_root_node_accounting(*b);
         Search::active_helpers.store(0, std::memory_order_relaxed);
@@ -439,7 +432,6 @@ void run_benchmark()
         Search::thread_stats[0].aspiration_fail_highs.store(0, std::memory_order_relaxed);
         Search::search_position(*b, 10);
 
-        // Read nodes_visited
         extern thread_local uint64_t nodes_visited;
         total_nodes += nodes_visited;
     }
@@ -457,7 +449,6 @@ void run_benchmark()
     std::cout << "===============================" << std::endl;
 }
 
-// Master UCI lifecycle loop
 void uci_loop()
 {
     auto board_ptr = std::make_unique<Board>();
@@ -478,7 +469,7 @@ void uci_loop()
         }
         else if (line == "uci")
         {
-            std::cout << "id name Coco v1.5.0\n";
+            std::cout << "id name Coco v2.0.0\n";
             std::cout << "id author NotKaede-11\n";
             std::cout << "info string build arch=" << COCO_BUILD_ARCH
                       << " isa=" << compiled_isa()
@@ -494,16 +485,11 @@ void uci_loop()
             std::cout << "option name Ponder type check default false\n";
             std::cout << "option name MultiPV type spin default 1 min 1 max 256\n";
             std::cout << "option name Move Overhead type spin default 30 min 0 max 5000\n";
-            std::cout << "option name Use PEXT type check default "
-                      << (pext_available() ? "true" : "false") << "\n";
-            std::cout << "option name EvalFile type string default coco.nnue\n";
+            std::cout << "info string Evaluator Ravager v3 (embedded weights)\n";
             std::cout << "option name SyzygyPath type string default <empty>\n";
             std::cout << "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n";
-            std::cout << "option name SyzygyProbeLimit type check default true\n";
             std::cout << "option name Syzygy50MoveRule type check default true\n";
-            std::cout << "option name UCI_ShowWDL type check default false\n";
-            std::cout << "option name UCI_AnalyseMode type check default false\n";
-            std::cout << "option name Contempt type spin default 0 min -100 max 100\n";
+            std::cout << "option name UCI_Chess960 type check default false\n";
             std::cout << "uciok\n";
         }
         else if (line.rfind("setoption", 0) == 0)
@@ -558,22 +544,7 @@ void uci_loop()
                     {
                         Search::Move_Overhead = std::stoi(option_value);
                     }
-                    else if (option_name == "EvalFile")
-                    {
-                        stop_search();
-                        std::string current_fen = board.get_fen();
-                        if (!g_nnue.load_network(option_value))
-                        {
-                            std::cout << "info string Warning: Could not load NNUE weights file '" << option_value << "'.\n";
-                        }
-                        else
-                        {
-                            // Accumulators are network-specific. Preserve the
-                            // position while rebuilding it under the new net.
-                            board.parse_fen(current_fen);
-                            std::cout << "info string NNUE weights file loaded successfully: '" << option_value << "'.\n";
-                        }
-                    }
+
                     else if (option_name == "RFP_Margin")
                     {
                         Search::RFP_Margin = std::stoi(option_value);
@@ -623,6 +594,18 @@ void uci_loop()
                     {
                         Search::UCI_ShowWDL = (option_value == "true");
                     }
+                    else if (option_name == "UCI_Chess960")
+                    {
+                        if (option_value != "true" && option_value != "false")
+                            continue;
+                        const bool chess960 = option_value == "true";
+                        if (board.is_chess960() != chess960) {
+                            board.parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                                            chess960);
+                            Search::reset_game_clock();
+                            tt.clear();
+                        }
+                    }
                     else if (option_name == "UCI_AnalyseMode")
                     {
                         Search::UCI_AnalyseMode = (option_value == "true");
@@ -653,6 +636,7 @@ void uci_loop()
         else if (line == "ucinewgame")
         {
             stop_search();
+            Search::reset_game_clock();
             tt.clear();
         }
         else if (line.rfind("position", 0) == 0)
@@ -663,6 +647,7 @@ void uci_loop()
         }
         else if (line.rfind("go perft", 0) == 0)
         {
+            stop_search();
             std::istringstream iss(line);
             std::string dummy1, dummy2;
             int depth = 1;
@@ -689,6 +674,7 @@ void uci_loop()
         else if (line == "eval")
         {
             std::cout << "Evaluation: " << Evaluation::evaluate(board) << "\n";
+            std::cout << "Ravager display: " << RavagerEval::display(board) << "\n";
         }
         else if (line == "d")
         {

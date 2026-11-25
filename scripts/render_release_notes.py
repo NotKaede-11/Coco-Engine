@@ -24,7 +24,10 @@ def render(repository: str, tag: str) -> str:
         relative = resolved.relative_to(ROOT.resolve()).as_posix()
         url = f'https://github.com/{repository}/blob/{quote(tag, safe="")}/{quote(relative)}'
         return f'[{label}]({url}{separator}{fragment})'
-    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace, source.read_text(encoding='utf-8'))
+    notes = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', replace, source.read_text(encoding='utf-8'))
+    encoded_tag = quote(tag, safe="")
+    download = f'https://github.com/{repository}/releases/download/{encoded_tag}/coco-{encoded_tag}-source.zip'
+    return notes.rstrip() + f'\n\n[Download matching source]({download})\n'
 
 
 def main():

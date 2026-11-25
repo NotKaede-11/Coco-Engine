@@ -3,6 +3,7 @@
 #include "nnue.h"
 #include "uci.h"
 #include "search.h"
+#include "ravager_eval.h"
 #include <cstdio>
 
 #if defined(_WIN32)
@@ -52,15 +53,14 @@ int main(int argc, char* argv[]) {
     std::setbuf(stdout, nullptr);
     std::setbuf(stdin, nullptr);
 
-    // 1. Initialize engine systems
     Board::init_zobrist();
     init_all_attack_tables();
     Search::init_search_tables();
     
-    // Load NNUE weights from file
-    if (!g_nnue.load_network("coco.nnue")) {
-        std::cerr << "Error: Could not load NNUE weights file 'coco.nnue'." << std::endl;
-        std::cerr << "Please ensure 'coco.nnue' is located in the working directory or next to the executable." << std::endl;
+    // The fixed release evaluator never depends on a working-directory file.
+    // Stale or malformed coco.nnue files cannot replace the selected network.
+    if (!RavagerEval::load_embedded()) {
+        std::cerr << "Error: Could not initialize Coco's embedded network." << std::endl;
         return 1;
     }
 
@@ -68,7 +68,6 @@ int main(int argc, char* argv[]) {
     // Coco wordmark when a person launches the engine directly in a terminal.
     print_startup_wordmark();
     
-    // Parse arguments safely
     std::vector<std::string> args(argv, argv + argc);
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--datagen" && i + 3 < args.size()) {
@@ -89,6 +88,14 @@ int main(int argc, char* argv[]) {
                         options.tt_mb_per_worker = std::stoull(args[++j]);
                     else if (args[j] == "--manifest" && j + 1 < args.size())
                         options.manifest_path = args[++j];
+                    else if (args[j] == "--game-records" && j + 1 < args.size())
+                        options.game_records_path = args[++j];
+                    else if (args[j] == "--datagen-depth" && j + 1 < args.size())
+                        options.search_depth = std::stoi(args[++j]);
+                    else if (args[j] == "--max-game-ply" && j + 1 < args.size())
+                        options.max_game_ply = std::stoi(args[++j]);
+                    else if (args[j] == "--max-empty-games" && j + 1 < args.size())
+                        options.max_empty_games = std::stoi(args[++j]);
                     else
                         throw std::invalid_argument("unknown or incomplete datagen option: " + args[j]);
                 }
@@ -102,7 +109,6 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // 2. Start the UCI protocol listener loop (master loop)
     uci_loop();
     
     return 0;

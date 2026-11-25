@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <iostream>
 
-// Define global attack tables
 U64 pawn_attacks[2][64];
 U64 knight_attacks[64];
 U64 king_attacks[64];
@@ -45,7 +44,6 @@ void set_pext_enabled(bool enabled) {
     use_pext_attacks = enabled && pext_available();
 }
 
-// Helper functions for magic bitboards generation
 U64 bishop_attacks_on_the_fly(int sq, U64 block) {
     U64 attacks = 0;
     int r, f;
@@ -139,7 +137,6 @@ U64 set_occupancy_helper(int index, U64 mask) {
     return occupancy;
 }
 
-// Generate magic numbers dynamically
 U64 find_magic(int sq, int relevant_bits, bool bishop) {
     U64 mask = bishop ? get_bishop_mask(sq) : get_rook_mask(sq);
     int num_indices = 1 << relevant_bits;
@@ -255,7 +252,6 @@ void init_all_attack_tables() {
         bishop_pext_attacks[sq] = &bishop_pext_attacks_table[bishop_offset];
         rook_pext_attacks[sq] = &rook_pext_attacks_table[rook_offset];
 
-        // Fill attack tables
         int b_indices = 1 << b_bits;
         for (int i = 0; i < b_indices; i++) {
             U64 block = set_occupancy_helper(i, bishop_masks[sq]);
@@ -310,7 +306,6 @@ void init_all_attack_tables() {
                 int step_r = (dr > 0) ? 1 : -1;
                 int step_f = (df > 0) ? 1 : -1;
                 
-                // Precompute full line
                 for (int r = r1, f = f1; r >= 0 && r < 8 && f >= 0 && f < 8; r += step_r, f += step_f) {
                     line_bb[sq1][sq2] |= (1ULL << (r * 8 + f));
                 }
@@ -466,9 +461,8 @@ void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode
     U64 enemy_occ = board.get_occupancy(them);
     U64 empty = ~board.get_occupancy(BOTH);
 
-    // 1. The setwise candidate is retained only as a debug differential
-    // oracle: it regressed release NPS, so production keeps the proven
-    // per-pawn emission path.
+    // Keep setwise generation as a debug cross-check. Per-pawn emission was
+    // faster in the release benchmark.
 #ifndef NDEBUG
     MoveList pawn_setwise;
     generate_pawn_moves_setwise(board, pawn_setwise);
@@ -572,10 +566,19 @@ void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode
             emit_move(move_list, mode, Move(from, to, FLAG_QUIET));
         }
 
-        // Castling rights checking
+        if (board.is_chess960()) {
+            if ((mode == GenerationMode::ALL || mode == GenerationMode::QUIETS)
+                && board.get_castling_rights()) {
+                for (bool kingside : {true, false}) {
+                    Move castle = board.castle_move(kingside);
+                    if (!castle.is_none()) move_list.add(castle);
+                }
+            }
+            return;
+        }
+
         int rights = board.get_castling_rights();
         if (us == WHITE) {
-            // White King Castle
             if (rights & WHITE_OO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_F1) | (1ULL << SQ_G1)))) {
                     if (!board.is_square_attacked(SQ_E1, BLACK) && !board.is_square_attacked(SQ_F1, BLACK)) {
@@ -583,7 +586,6 @@ void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode
                     }
                 }
             }
-            // White Queen Castle
             if (rights & WHITE_OOO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_D1) | (1ULL << SQ_C1) | (1ULL << SQ_B1)))) {
                     if (!board.is_square_attacked(SQ_E1, BLACK) && !board.is_square_attacked(SQ_D1, BLACK)) {
@@ -592,7 +594,6 @@ void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode
                 }
             }
         } else { // us == BLACK
-            // Black King Castle
             if (rights & BLACK_OO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_F8) | (1ULL << SQ_G8)))) {
                     if (!board.is_square_attacked(SQ_E8, WHITE) && !board.is_square_attacked(SQ_F8, WHITE)) {
@@ -600,7 +601,6 @@ void generate_moves(const Board& board, MoveList& move_list, GenerationMode mode
                     }
                 }
             }
-            // Black Queen Castle
             if (rights & BLACK_OOO) {
                 if (!(board.get_occupancy(BOTH) & ((1ULL << SQ_D8) | (1ULL << SQ_C8) | (1ULL << SQ_B8)))) {
                     if (!board.is_square_attacked(SQ_E8, WHITE) && !board.is_square_attacked(SQ_D8, WHITE)) {
@@ -629,8 +629,6 @@ void generate_noisy_moves(const Board& board, MoveList& move_list) {
 }
 
 void generate_evasion_moves(const Board& board, MoveList& move_list) {
-    // Legality filtering in make_move()/is_move_legal() removes candidates
-    // that do not evade check.  Keeping the oracle result here provides a
-    // correctness boundary before introducing the dedicated fast backend.
+    // Generate all candidates so the legality filter can keep every evasion.
     generate_moves(board, move_list, GenerationMode::ALL);
 }

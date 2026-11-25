@@ -16,10 +16,15 @@ def validate(root=ROOT, *, ready=False, tag=None):
         raise ValueError('Engine name and release version disagree')
     if tag is not None and tag != 'v' + config['version']:
         raise ValueError(f'Tag {tag} does not match prepared v{config["version"]}')
-    network = (root / 'coco.nnue').read_bytes()
+    network_path = (root / config.get('nnue_file', 'coco.nnue')).resolve()
+    if not network_path.is_relative_to(root.resolve()):
+        raise ValueError('Network path leaves release source tree')
+    network = network_path.read_bytes()
     if len(network) != config['nnue_bytes'] or hashlib.sha256(network).hexdigest().upper() != config['nnue_sha256']:
         raise ValueError('Release network hash/size mismatch')
-    if config['nnue_bytes'] != 2 * 771 * config['nnue_l1_size'] + 4:
+    expected_bytes = (89315360 if config.get('nnue_architecture') == 'ravager-v3'
+                      else 2 * 771 * config['nnue_l1_size'] + 4)
+    if config['nnue_bytes'] != expected_bytes:
         raise ValueError('Network dimensions disagree with file size')
     if f'id name {config["engine_name"]}\\n' not in (root / 'src/uci.cpp').read_text():
         raise ValueError('Source UCI identity does not match release metadata')
@@ -33,7 +38,7 @@ def validate(root=ROOT, *, ready=False, tag=None):
             or any(not re.fullmatch(r'coco-chess-[a-z0-9.-]+', name) for name in artifacts)):
         raise ValueError('Expected thirteen distinct platform artifact names')
     checks = config['readiness_checks']
-    required = {'sprt_log_reviewed', 'gauntlet_completed_and_reviewed',
+    required = {'sprt_log_reviewed', 'standard_release_match_reviewed',
                 'historical_opponent_provenance_reviewed', 'release_platform_checks_passed'}
     if set(checks) != required or any(type(v) is not bool for v in checks.values()):
         raise ValueError('Invalid release readiness checklist')

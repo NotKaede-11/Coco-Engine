@@ -1,5 +1,0 @@
-# Only the host-root /robots.txt controls crawling on a project site.
-User-agent: *
-Allow: /
-
-Sitemap: https://notkaede-11.github.io/coco-engine-website/sitemap.xml

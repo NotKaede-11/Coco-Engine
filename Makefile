@@ -23,6 +23,9 @@
 
 # --- Engine name and source files ---
 EXE       = coco-chess
+ifeq ($(OS),Windows_NT)
+EXE       = coco-chess.exe
+endif
 
 SRCS      = src/main.cpp       \
             src/board.cpp      \
@@ -103,29 +106,14 @@ endif
 
 build:
 	@echo "=== Building Coco (ARCH=$(ARCH), COMP=$(COMP)) ==="
-	$(PYTHON) scripts/make_nnue_header.py
-	$(PYTHON) scripts/make_build_info.py --arch "$(ARCH)" --compiler "$(if $(COMP),$(COMP),gcc)"
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SRCS) $(FATHOM) -o $(EXE) $(LDFLAGS)
+	$(PYTHON) scripts/build_release.py --arch "$(ARCH)" --compiler "$(if $(COMP),$(COMP),gcc)" --output "$(EXE)"
 	@echo "=== Done: $(EXE) ==="
 
 tuner:
-	@echo "=== Building Coco production-trace HCE tuner ==="
-	$(PYTHON) scripts/make_nnue_header.py
-	$(PYTHON) scripts/make_build_info.py --arch "$(ARCH)" --compiler "$(if $(COMP),$(COMP),gcc)"
-	$(CXX) $(CXXFLAGS) $(INCLUDES) src/tuner.cpp src/board.cpp src/movegen.cpp src/evaluate.cpp src/nnue.cpp -o coco-tuner $(LDFLAGS)
-	@echo "=== Done: coco-tuner ==="
+	@echo "HCE tuning is parked for 2.0; the prior working source is preserved in the integration backup."
 
 pgo:
-	@echo "=== PGO Build: Stage 1 — Instrumented binary ==="
-	$(PYTHON) scripts/make_nnue_header.py
-	$(PYTHON) scripts/make_build_info.py --arch "$(ARCH)" --compiler "$(if $(COMP),$(COMP),gcc)"
-	$(CXX) $(CXXFLAGS) -fprofile-generate $(INCLUDES) $(SRCS) $(FATHOM) -o $(EXE)-pgo $(LDFLAGS)
-	@echo "=== PGO Build: Stage 2 — Collecting profile data via bench ==="
-	printf "bench\nquit\n" | ./$(EXE)-pgo
-	@echo "=== PGO Build: Stage 3 — Optimized binary using profile data ==="
-	$(CXX) $(CXXFLAGS) -fprofile-use -fprofile-correction $(INCLUDES) $(SRCS) $(FATHOM) -o $(EXE) $(LDFLAGS)
-	@rm -f $(EXE)-pgo *.gcda *.gcno
-	@echo "=== Done: $(EXE) (PGO optimized) ==="
+	@echo "PGO is deferred for the fixed-evaluator 2.0 release; use make build."
 
 clean:
 	@echo "=== Cleaning build artifacts ==="
@@ -138,7 +126,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  build   Build the engine (default target)"
-	@echo "  tuner   Build the production-trace HCE AdaGrad tuner"
+	@echo "  tuner   Report the status of HCE tuning for 2.0"
 	@echo "  pgo     Build with Profile-Guided Optimization (~5-10%% extra NPS)"
 	@echo "  clean   Remove build artifacts"
 	@echo "  help    Show this message"

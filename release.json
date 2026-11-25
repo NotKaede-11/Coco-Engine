@@ -1,19 +1,19 @@
 {
-  "version": "1.5.1",
-  "engine_name": "Coco v1.5.1",
-  "status": "released",
-  "release_ready": true,
+  "version": "2.0.0",
+  "engine_name": "Coco v2.0.0",
+  "status": "candidate",
+  "release_ready": false,
   "readiness_checks": {
-    "sprt_log_reviewed": true,
-    "gauntlet_completed_and_reviewed": true,
-    "historical_opponent_provenance_reviewed": true,
-    "release_platform_checks_passed": true
+    "sprt_log_reviewed": false,
+    "standard_release_match_reviewed": true,
+    "historical_opponent_provenance_reviewed": false,
+    "release_platform_checks_passed": false
   },
-  "nnue_l1_size": 512,
-  "nnue_bytes": 789508,
-  "nnue_sha256": "392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055",
-  "fixed_signature_nodes": 477035,
-  "notes": "docs/releases/v1.5.0.md",
+  "nnue_l1_size": 1024,
+  "nnue_bytes": 89315360,
+  "nnue_sha256": "FFAF35D6C38389DCF30FCCE12FF9ABD7B46AB79DC3614FE1FD3EEA8D804317B0",
+  "fixed_signature_nodes": 283028,
+  "notes": ".github/release-notes.md",
   "artifacts": [
     "coco-chess-windows-x86-64-popcnt.exe",
     "coco-chess-windows-x86-64-avx2.exe",
@@ -28,5 +28,8 @@
     "coco-chess-macos-apple-silicon",
     "coco-chess-macos-x86-64-popcnt",
     "coco-chess-macos-x86-64-avx2"
-  ]
+  ],
+  "nnue_file": "networks/coco.nnue",
+  "nnue_architecture": "ravager-v3",
+  "clock_policy": "r24-stability"
 }

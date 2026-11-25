@@ -8,7 +8,6 @@
 
 namespace {
 
-constexpr int MATE_THRESHOLD = 29000;
 constexpr U64 VALID_BIT = 1ULL << 50;
 
 struct EntrySnapshot {

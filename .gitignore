@@ -16,10 +16,17 @@ src/nnue_data.h
 src/build_info.h
 
 # Local benchmarks, logs, checkpoints, and large data
+*.binpack
+*.binpack.zst
 scratch/
+/dev-builds/
+# The homepage is maintained in the sibling website repository.
+/coco-engine-website/
+/website/
 logs/
 backups/
 opponents/
+/new-references/
 books/
 tournament_settings/
 bullet/
@@ -78,7 +85,8 @@ scripts/spsa_tune_30k.py
 scripts/spsa_tune_100k.py
 scripts/train_nnue.py
 
-# Local-only configuration and agent notes
+# Local-only configuration and agent notes. The website has its own ignore rules.
+/AGENTS.md
 .agents/
 .impeccable/
 PRODUCT.md
@@ -115,15 +123,62 @@ __pycache__/
 
 # Private working notes and machine-specific helpers
 /docs/session-notes-2026-09-14.md
+/docs/archive/private/
+/docs/evidence/movetime-record.md
 /docs/review-2026-09-14.md
 /docs/nnue-training-guidance.md
 /docs/ordo-setup.md
 /docs/evidence/path-privacy-audit-2026-09-14.md
 /docs/evidence/release-preparation-2026-09-14.md
 /.codex/
-/kaggle-sprt-v2/
 /run_gauntlet.bat
 /scripts/calculate_elo.py
 /scripts/gauntlet_status.py
 /scripts/run_gauntlet.py
 /testing/profile_corrhist_lifetime.py
+
+build_cache/
+*.spec
+
+# Private machine/session state and credentials (examples may be published)
+/.pytest_cache/
+/.codebase-memory/
+/sessions/
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# Training payloads and recovery archives; maintained Python/C++ tools stay visible
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*-recovery*.zip
+*.nnue
+!/networks/coco.nnue
+*.net
+# Local development history, current SPRT kits, and retired workspaces
+/docs/
+/testing/
+/kaggle-sprt-2.0/
+/kaggle-sprt-1.6/
+/kaggle-sprt-v2/
+/kaggle-nnue-pipeline/
+/nnue-training/
+/local-datagen/
+/leela-data/
+/stockfish-data/
+/test-nets/
+/build.bat
+/scripts/make_nnue_header.py
+/scripts/audit_release_gauntlet.py
+/scripts/bootstrap_gauntlet_openings.py
+/scripts/rate_release_gauntlet.py
+/scripts/check_dev16.py
+/scripts/datagen_replay.py
+/scripts/datagen_shards.py

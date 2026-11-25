@@ -68,6 +68,37 @@ public:
 #endif
     }
 
+    // Move one feature in a single accumulator pass. Keep the same wrapping
+    // int16 arithmetic as deactivate followed by activate, for both views.
+    inline void accumulator_move(Accumulator& acc, int side,
+                                 int removed_index, int added_index) const {
+        const int16_t* removed = layer1_weights[removed_index];
+        const int16_t* added = layer1_weights[added_index];
+#if defined(__AVX2__)
+        for (int i = 0; i < L1_SIZE; i += 16) {
+            const __m256i value = _mm256_load_si256((const __m256i*)&acc.v[side][i]);
+            const __m256i sub = _mm256_load_si256((const __m256i*)&removed[i]);
+            const __m256i add = _mm256_load_si256((const __m256i*)&added[i]);
+            _mm256_store_si256((__m256i*)&acc.v[side][i],
+                              _mm256_add_epi16(_mm256_sub_epi16(value, sub), add));
+        }
+#elif defined(__ARM_NEON)
+        for (int i = 0; i < L1_SIZE; i += 8) {
+            const int16x8_t value = vld1q_s16(&acc.v[side][i]);
+            const int16x8_t sub = vld1q_s16(&removed[i]);
+            const int16x8_t add = vld1q_s16(&added[i]);
+            vst1q_s16(&acc.v[side][i], vaddq_s16(vsubq_s16(value, sub), add));
+        }
+#else
+        for (int i = 0; i < L1_SIZE; ++i) {
+            // Each int16 input promotes to int; the three-term sum fits int.
+            // C++20 narrowing preserves the same low 16 bits as two updates.
+            acc.v[side][i] = static_cast<int16_t>(
+                static_cast<int>(acc.v[side][i]) - removed[i] + added[i]);
+        }
+#endif
+    }
+
     // Incremental deactivation helper
     inline void accumulator_deactivate(Accumulator& acc, int side, int feature_index) const {
         const int16_t* weights = layer1_weights[feature_index];

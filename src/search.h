@@ -8,6 +8,7 @@
 class TranspositionTable;
 
 const int INFINITY_SCORE = 50000;
+inline constexpr int MAX_PLY = 128;
 
 namespace Search {
     enum class NodeType : uint8_t { NON_PV, PV };
@@ -42,10 +43,8 @@ namespace Search {
     extern uint64_t node_limit;
     extern int mate_limit;
 
-    // Thread count for Lazy SMP
     extern int num_threads;
 
-    // Per-thread statistics
     struct ThreadStats {
         std::atomic<uint64_t> nodes{0};
         std::atomic<uint64_t> tbhits{0};
@@ -77,14 +76,14 @@ namespace Search {
     extern bool UCI_ShowWDL;
     extern bool UCI_AnalyseMode;
 
-    // Initialize search-related tables (like LMR lookup table)
     void init_search_tables();
 
     // Allocate soft and hard search boundaries from active clock values (in ms)
     void allocate_time(int time_left, int increment, int moves_to_go);
 
-    // Compute time controls from clock parameters (called before thread launch)
-    void compute_time_controls(Color side, const Limits& limits);
+    // Set the new search limits before launching workers.
+    void compute_time_controls(Color side, const Limits& limits, int game_ply = 0);
+    void reset_game_clock();
 
     void ponder_hit();
 

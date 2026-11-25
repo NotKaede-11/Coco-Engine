@@ -154,10 +154,6 @@ jobs:
 
       # macOS runners come with Clang via Xcode — no setup needed
 
-      # --- Generate embedded NNUE header ---
-      - name: Generate Embedded NNUE Header
-        run: python3 scripts/make_nnue_header.py
-
       # --- Build ---
       - name: Build Engine
         run: |
@@ -165,15 +161,15 @@ jobs:
 
       - name: Verify Network Identity
         run: |
-          python3 testing/verify_nnue_file.py coco.nnue --l1-size 512 --sha256 392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055
+          python3 scripts/verify_nnue_file.py networks/coco.nnue --format ravager-v3 --sha256 FFAF35D6C38389DCF30FCCE12FF9ABD7B46AB79DC3614FE1FD3EEA8D804317B0
 
       - name: Validate Native Release Binary
         if: matrix.validate
         run: |
-          python3 testing/verify_build_identity.py ./coco-chess --arch ${{ matrix.arch }}
-          python3 testing/validate_options.py ./coco-chess
-          python3 testing/verify_uci_limits.py ./coco-chess
-          python3 testing/verify_fixed_signature.py ./coco-chess
+          python3 scripts/verify_build_identity.py ./coco-chess --arch ${{ matrix.arch }}
+          python3 scripts/validate_options.py ./coco-chess --chess960
+          python3 scripts/verify_uci_limits.py ./coco-chess
+          python3 scripts/verify_fixed_signature.py ./coco-chess
 
       # --- Rename to final artifact name ---
       - name: Rename Binary
@@ -193,7 +189,7 @@ jobs:
             --arch "${{ matrix.arch }}" \
             --compiler "${{ matrix.comp }}" \
             --source-commit "${{ github.sha }}" \
-            --network coco.nnue \
+            --network networks/coco.nnue \
             --fixed-signature-verified "${{ matrix.validate }}" \
             $runtime_flag \
             --output "${{ matrix.artifact }}.metadata.json"
@@ -226,10 +222,20 @@ jobs:
         with:
           path: ./dist/
           merge-multiple: true
-      - name: Include licenses
+      - name: Include licenses and third-party notices
         run: |
           cp LICENSE ./dist/LICENSE.txt
           cp Fathom/src/LICENSE ./dist/FATHOM-LICENSE.txt
+          cp third_party/ravager/LICENSE ./dist/RAVAGER-LICENSE.txt
+          cp third_party/calvin/LICENSE ./dist/CALVIN-LICENSE.txt
+          cp third_party/NOTICES.md ./dist/NOTICES.md
+      - name: Archive corresponding source from the build commit
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          git archive --format=zip --prefix="coco-${RELEASE_TAG}/" \
+            --output="./dist/coco-${RELEASE_TAG}-source.zip" "$RELEASE_COMMIT"
       - name: Verify artifact completeness and provenance
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -242,7 +248,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
-          (cd dist && sha256sum coco-chess-* LICENSE.txt FATHOM-LICENSE.txt release-manifest.json > SHA256SUMS.txt)
+          (cd dist && sha256sum coco-chess-* "coco-${RELEASE_TAG}-source.zip" LICENSE.txt FATHOM-LICENSE.txt RAVAGER-LICENSE.txt CALVIN-LICENSE.txt NOTICES.md release-manifest.json > SHA256SUMS.txt)
           python3 scripts/render_release_notes.py --repository "$RELEASE_REPOSITORY" --tag "$RELEASE_TAG" --output release_notes.md
       - name: Create draft only
         uses: softprops/action-gh-release@v2
@@ -255,6 +261,10 @@ jobs:
             ./dist/coco-chess-*
             ./dist/LICENSE.txt
             ./dist/FATHOM-LICENSE.txt
+            ./dist/RAVAGER-LICENSE.txt
+            ./dist/CALVIN-LICENSE.txt
+            ./dist/coco-*-source.zip
+            ./dist/NOTICES.md
             ./dist/release-manifest.json
             ./dist/SHA256SUMS.txt
           body_path: release_notes.md

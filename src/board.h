@@ -37,7 +37,7 @@ public:
     void clear();
 
     // Parse a complete six-field FEN. Invalid input leaves the board unchanged.
-    bool parse_fen(const std::string& fen);
+    bool parse_fen(const std::string& fen, bool chess960 = false);
 
     // Convert current board state to FEN string
     std::string get_fen() const;
@@ -60,18 +60,26 @@ public:
     // Legality checks
     LegalityMasks get_legality_masks() const;
     bool is_move_legal(Move move, const LegalityMasks& masks) const;
+    Move castle_move(bool kingside) const;
 
     // Static Exchange Evaluation (SEE)
     int see(Move move) const;
     U64 get_all_attackers(int square, U64 occ) const;
+
+    int get_history_ply() const { return history_ply; }
 
     // Getters
     U64 get_pieces(int color, int piece_type) const { return pieces[color][piece_type]; }
     U64 get_occupancy(int color) const { return occupancies[color]; }
     Color get_side_to_move() const { return side_to_move; }
     int get_castling_rights() const { return castling_rights; }
+    bool is_chess960() const { return chess960; }
     int get_en_passant_square() const { return en_passant_square; }
     int get_halfmove_clock() const { return halfmove_clock; }
+    int get_game_ply() const {
+        const int completed_moves = fullmove_number > 10000 ? 10000 : fullmove_number - 1;
+        return 2 * completed_moves + (side_to_move == BLACK);
+    }
     U64 get_hash_key() const { return hash_key; }
     U64 recompute_hash() const { return calculate_hash(); }
     uint16_t get_pawn_key() const { return pawn_key; }
@@ -99,6 +107,11 @@ public:
     static void init_zobrist();
 
 private:
+    void nnue_move_piece(int color, int pt, int from, int to);
+    bool is_square_attacked(int square, int attacker_color, U64 occupancy) const;
+    U64 castling_key() const;
+    void relocate_castling(Color color, int king_from, int rook_from, int king_to, int rook_to);
+
     // Core bitboards
     U64 pieces[2][6];         // [color][piece_type]
     U64 occupancies[3];       // [WHITE], [BLACK], [BOTH]
@@ -109,6 +122,9 @@ private:
     // State variables
     Color side_to_move;
     int castling_rights;
+    // Rook origins stay fixed until the next FEN, even after a right is lost.
+    int castle_rook[4];
+    bool chess960;
     int en_passant_square;
     int halfmove_clock;
     int fullmove_number;

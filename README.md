@@ -7,13 +7,9 @@
   <br>
   <br>
 
-  **A modern, free UCI chess engine built around verified search and efficient NNUE evaluation.**
-
-  [![Release: v1.5.1][release-badge]][release-link]
+  [![Latest release][release-badge]][release-link]
   [![License: GPL v3][license-badge]][license-link]
   [![C++20][cpp-badge]][source-link]
-  [![CCRL 40/15: 3027](https://img.shields.io/badge/CCRL%2040%2F15-3027-blue?style=flat-square)](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit)
-  [![CCRL Blitz: 2986](https://img.shields.io/badge/CCRL%20Blitz-2986-blue?style=flat-square)](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit)
 
   [Official website](https://notkaede-11.github.io/coco-engine-website/) · [Download][release-link] · [Quick start](#quick-start) · [Build](#build-from-source) · [Changelog](CHANGELOG.md)
 
@@ -21,23 +17,25 @@
 
 ---
 
-**Coco Chess Engine** is a free, open-source, cross-platform UCI chess engine created and maintained by [NotKaede-11](https://github.com/NotKaede-11). Its search combines bitboards, staged move ordering, parallel alpha-beta techniques, an incrementally updated neural evaluator, and optional Syzygy tablebase probing.
+Coco is a free, open-source C++20 chess engine for UCI-compatible GUIs. It is named after Coco from *Witch Hat Atelier*.
 
-> [!IMPORTANT]
-> Coco is an engine, not a graphical chess application. Use it through a UCI-compatible interface such as Arena, BanksiaGUI, Cute Chess, or another chess GUI.
+The features and UCI options below describe **Coco 2.0**. See the
+[changelog](CHANGELOG.md) for changes and local match results.
 
 ## Strength
 
-| Version | My Estimate | CCRL 40/15 | CCRL Blitz |
-| :---: | :---: | :---: | :---: |
-| 1.5.1 | 2977 | - | [2986](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit) |
-| 1.5.0 | 2977 | [3027](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - |
-| 1.4.0 | - | - | - |
-| 1.3.0 | - | - | - |
-| 1.1.1 | - | - | [2596](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.1.1%2064-bit#Coco_1_1_1_64-bit) |
-| 1.1.0 | - | - | - |
-| 1.0.1 | - | - | - |
-| 1.0.0 | - | - | - |
+| Version | My Estimate | CCRL 40/15 | CCRL Blitz | Chess Engines Diary (CEDR) |
+| :---: | :---: | :---: | :---: | :---: |
+| 1.5.1 | 2977 | - | [2986](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit) | [3165][cedr-october-2026] |
+| 1.5.0 | 2977 | [3027](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - | - |
+| 1.4.0 | - | - | - | - |
+| 1.3.0 | - | - | - | - |
+| 1.1.1 | - | - | [2596](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.1.1%2064-bit#Coco_1_1_1_64-bit) | - |
+| 1.1.0 | - | - | - | - |
+| 1.0.1 | - | - | - | - |
+| 1.0.0 | - | - | - | - |
+
+The CEDR column shows the rating listed in the October 2026 qualifying standings. The league uses [3 minutes plus 3 seconds per move](https://chessengines.blogspot.com/p/league.html).
 
 ## Quick start
 
@@ -58,6 +56,8 @@ Wait for `bestmove`, then enter `quit`.
 
 ## Choose the right binary
 
+See the [release downloads][release-link] for available builds.
+
 | Platform | Build | Best fit |
 |:--|:--|:--|
 | Windows / Linux | `x86-64-bmi2` | Modern Intel and AMD Zen 3 or newer; recommended for most recent x86 systems |
@@ -74,15 +74,16 @@ Using instructions unsupported by your CPU will prevent the engine from starting
 
 | Component | Architecture & Highlights |
 |:--|:--|
-| **Board & Movegen** | 64-bit bitboards, magic bitboards with optional BMI2/PEXT, staged move ordering |
-| **Search** | Alpha-beta PVS, iterative deepening, aspiration windows, RFP, NMP, LMR, and singular extensions |
-| **Neural Evaluation** | Embedded 768→512×2 NNUE with SIMD-vectorized incremental accumulator updates |
-| **Concurrency** | Lazy SMP multithreading across CPU cores sharing a lockless transposition table |
-| **Endgame & Tools** | MultiPV, ponder support, and integrated Syzygy tablebase probing (up to 6-piece) |
+| **Variants** | Standard chess and Chess960 (Fischer Random) via `UCI_Chess960` |
+| **Move Generation** | 64-bit bitboards with magic or BMI2/PEXT sliding attacks |
+| **Search** | Iterative deepening with alpha-beta/PVS, aspiration windows, and late-move reductions |
+| **Neural Evaluation** | Embedded Ravager v3 NNUE with incremental accumulator updates. The executable runs without a separate network file. |
+| **Concurrency** | Lazy SMP with a shared transposition table |
+| **Analysis & Endgames** | MultiPV, pondering, and Syzygy tablebase probing |
 
 ## UCI configuration
 
-The release build identifies as `Coco v1.5.1` and exposes these fifteen options to chess GUIs:
+The 2.0 development build exposes ten options to chess GUIs. To play Chess960, enable the variant in a Chess960-capable GUI and load a Chess960 starting position.
 
 | Option | Default | Purpose |
 |:--|--:|:--|
@@ -92,26 +93,28 @@ The release build identifies as `Coco v1.5.1` and exposes these fifteen options 
 | `Ponder` | false | Think during the opponent's turn |
 | `MultiPV` | 1 | Number of principal variations to report |
 | `Move Overhead` | 30 ms | Safety allowance for GUI and operating-system latency |
-| `Use PEXT` | hardware dependent | Use the BMI2 sliding-attack backend when supported |
-| `EvalFile` | `<embedded>` | Use built-in weights; set an explicit file path to load a compatible external network |
 | `SyzygyPath` | empty | Path to Syzygy tablebase files |
-| `SyzygyProbeDepth` | 1 | Depth threshold for probing positions at the largest loaded tablebase size |
-| `SyzygyProbeLimit` | true | Apply that depth threshold at the largest loaded tablebase size |
+| `SyzygyProbeDepth` | 1 | Minimum search depth for probing positions at the largest loaded tablebase size |
 | `Syzygy50MoveRule` | true | Respect the 50-move rule in root tablebase decisions |
-| `UCI_ShowWDL` | false | Include win/draw/loss permille estimates in analysis output |
-| `UCI_AnalyseMode` | false | Accept the standard GUI analysis-mode signal |
-| `Contempt` | 0 | Optional draw-preference setting; neutral by default |
+| `UCI_Chess960` | false | Enable Chess960 castling rules and UCI move encoding |
 
 ## Build from source
 
-The build requires a C++20-capable compiler and Python for generating the embedded network header. Release builds embed `coco.nnue` into the executable.
+Building 2.0 requires a C++20 compiler, a C11 compiler, and Python 3.11 or newer.
+Run the commands below from the repository root after downloading or cloning
+the complete source, including `networks/` and `third_party/`.
+
+The build verifies and embeds `networks/coco.nnue`. This is the original
+Ravager v3 network under Coco's packaging filename. Its bytes and SHA-256 are
+recorded in `release.json` and the [third-party notices](third_party/NOTICES.md).
+The finished executable includes the network.
 
 ### Windows
 
-With GCC/MinGW available on `PATH`:
+With GCC/MinGW (`gcc` and `g++`) available on `PATH`:
 
 ```cmd
-build.bat
+python scripts/build_release.py --arch native --jobs 2 --output coco-chess.exe
 ```
 
 ### Makefile builds
@@ -128,22 +131,17 @@ make build ARCH=apple-silicon COMP=clang
 
 Use `COMP=mingw` to cross-compile Windows binaries from Linux. Run `make help` for all supported targets and options.
 
-## Project
-
-Coco is a personal chess engine created, architected, and maintained by [NotKaede-11](https://github.com/NotKaede-11). Ideas are treated as hypotheses: changes are retained through correctness checks, deterministic comparisons, and self-play evidence rather than because another engine uses a similar technique.
-
-The name comes from Coco, the protagonist of *Witch Hat Atelier*.
-
-Bug reports, test games, code review, and constructive feedback are welcome through [GitHub Issues][issues-link].
+`release.json` records the version, selected network hash, expected search
+signature and package names. The build and CI read it to verify the release inputs.
 
 ## License
 
-Coco is free software distributed under the [GNU General Public License v3][license-link]. If you distribute a modified binary, you must also make the corresponding source available under the GPL.
+Coco's original code is licensed under [GPLv3][license-link]. The 2.0 build includes AGPLv3-licensed Ravager evaluator code by erensh27 and CC0 1.0 Ravager v3 weights. See the [third-party notices](third_party/NOTICES.md) for attribution and redistribution details.
 
-[release-badge]: https://img.shields.io/badge/release-v1.5.1-blue?style=flat-square
-[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/tag/v1.5.1
+[release-badge]: https://img.shields.io/github/v/release/NotKaede-11/Coco-Engine?style=flat-square
+[release-link]: https://github.com/NotKaede-11/Coco-Engine/releases/latest
 [license-badge]: https://img.shields.io/github/license/NotKaede-11/Coco-Engine?style=flat-square&label=license
 [license-link]: LICENSE
 [cpp-badge]: https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus
 [source-link]: src
-[issues-link]: https://github.com/NotKaede-11/Coco-Engine/issues
+[cedr-october-2026]: https://chessengines.blogspot.com/2026/10/the-102026-season-of-chess-engine.html?m=0

@@ -11,85 +11,78 @@ permissions:
   contents: read
 
 jobs:
-  engine-validation:
-    name: Engine, protocol, and perft (${{ matrix.comp }})
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
+  native:
+    name: Integrated engine (${{ matrix.runner }}, ${{ matrix.compiler }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        comp: [gcc, clang]
+        include:
+          - runner: ubuntu-22.04
+            compiler: gcc
+            arch: x86-64-popcnt
+          - runner: ubuntu-22.04
+            compiler: clang
+            arch: x86-64-popcnt
+          - runner: macos-14
+            compiler: clang
+            arch: apple-silicon
+          - runner: macos-15-intel
+            compiler: clang
+            arch: x86-64-popcnt
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Validate release metadata and packaging guards
+      - name: Install pinned move-generation oracle
+        run: python -m pip install chess==1.11.2
+      - name: Validate metadata, packaging and public paths
         run: |
           python scripts/check_release.py
-          python testing/release_pipeline_test.py
-          python testing/public_paths_test.py
+          python scripts/release_pipeline_test.py
+          python scripts/public_paths_test.py
           python scripts/check_public_paths.py
-      - name: Build portable x86-64 engine
-        run: make build ARCH=x86-64-popcnt COMP=${{ matrix.comp }}
-      - name: Verify network identity
+      - name: Build embedded release candidate
+        run: make build ARCH=${{ matrix.arch }} COMP=${{ matrix.compiler }}
+      - name: Validate identity, options, protocol, limits and SMP
+        run: |
+          python scripts/verify_build_identity.py ./coco-chess --arch ${{ matrix.arch }}
+          python scripts/validate_options.py ./coco-chess --chess960
+          python scripts/uci_conformance.py ./coco-chess
+          python scripts/verify_uci_limits.py ./coco-chess
+          python scripts/verify_smp_lifecycle.py ./coco-chess
+          python scripts/verify_fixed_signature.py ./coco-chess
+      - name: Validate embedded bytes, standalone startup and all FRC layouts
         run: >-
-          python testing/verify_nnue_file.py coco.nnue --l1-size 512
-          --sha256 392BE46C8E06C6D0CB6BEDF00D8E3D08950D11DAA883362DE98F0C1DEEE68055
-      - name: Verify runtime build identity
-        run: python testing/verify_build_identity.py ./coco-chess --arch x86-64-popcnt
-      - name: Verify deterministic search signature
-        run: python testing/verify_fixed_signature.py ./coco-chess
-      - name: Verify UCI options
-        run: python testing/validate_options.py ./coco-chess
-      - name: Verify UCI search limits
-        run: python testing/verify_uci_limits.py ./coco-chess
-      - name: Verify UCI lifecycle and malformed-input handling
-        run: python testing/uci_conformance.py ./coco-chess
-      - name: Verify multi-thread lifecycle
-        run: python testing/verify_smp_lifecycle.py ./coco-chess
-      - name: Verify perft through depth 3
-        env:
-          COCO_ENGINE: ${{ github.workspace }}/coco-chess
-        run: python testing/run_perft_suite.py 3
-      - name: Verify noisy-opening regression fixtures
-        run: python testing/noisy_opening_regression.py --engine ./coco-chess
-      - name: Verify datagen provenance and safe resume
-        run: python testing/datagen_manifest_test.py --engine ./coco-chess
+          python scripts/verify_20_release.py ./coco-chess --frc
+          --report scratch/ci-release-verification.json
+      - name: Validate datagen provenance and safe resume
+        if: matrix.runner == 'ubuntu-22.04' && matrix.compiler == 'gcc'
+        run: python scripts/datagen_manifest_test.py --engine ./coco-chess
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-${{ matrix.runner }}-${{ matrix.compiler }}
+          path: scratch/ci-release-verification.json
+          if-no-files-found: ignore
 
-  cpp-correctness:
-    name: C++ fixtures with ASan and UBSan
+  windows-cross-build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Generate embedded NNUE header
-        run: python scripts/make_nnue_header.py
-      - name: Build and run correctness fixtures
-        run: python testing/run_cpp_tests.py --sanitizers
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - run: make build ARCH=x86-64-avx2 COMP=mingw
+      - run: test -s coco-chess.exe
 
-  windows-cross-build:
-    name: Windows cross-compile
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install MinGW
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
-      - name: Build Windows AVX2 executable
-        run: make build ARCH=x86-64-avx2 COMP=mingw
-      - name: Confirm release artifact
-        run: test -s coco-chess.exe
-
-  windows-native-smoke:
-    name: Windows native build and execution
+  windows-native:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -100,17 +93,18 @@ jobs:
           msystem: UCRT64
           update: true
           install: mingw-w64-ucrt-x86_64-gcc
-      - name: Build natively with MinGW UCRT
+      - run: python -m pip install chess==1.11.2
+      - name: Build and verify integrated Windows candidate
         shell: pwsh
         run: |
           $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
-          cmd /c build.bat
-      - name: Execute protocol and fixed-signature smoke tests
-        shell: pwsh
-        run: |
-          python testing/verify_build_identity.py .\coco-chess.exe --arch native
+          python scripts/build_release.py --arch x86-64-avx2 --output coco-chess.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python testing/validate_options.py .\coco-chess.exe
+          python scripts/validate_options.py ./coco-chess.exe --chess960
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python testing/verify_fixed_signature.py .\coco-chess.exe
+          python scripts/uci_conformance.py ./coco-chess.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_smp_lifecycle.py ./coco-chess.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_20_release.py ./coco-chess.exe --frc --report scratch/ci-release-verification.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -10,9 +10,13 @@ struct DatagenOptions {
     size_t buffer_positions = 5000;
     size_t tt_mb_per_worker = 16;
     int max_game_ply = 250;
+    int search_depth = 4;
+    int max_empty_games = 1000;
     std::string opening_book_path;
     std::string engine_path;
     std::string manifest_path;
+    // Optional complete-game JSONL sidecar. Use a new file per shard.
+    std::string game_records_path;
 };
 
 // Entry point function to launch multi-threaded self-play harvesting
