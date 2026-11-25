@@ -26,6 +26,7 @@ The features and UCI options below describe **Coco 2.0**. See the
 
 | Version | My Estimate | CCRL 40/15 | CCRL Blitz | Chess Engines Diary (CEDR) |
 | :---: | :---: | :---: | :---: | :---: |
+| 2.0.0 | 3550 | | | |
 | 1.5.1 | 2977 | - | [2986](https://computerchess.org.uk/404/cgi/engine_details.cgi?print=Details&each_game=1&eng=Coco%201.5.1%2064-bit#Coco_1_5_1_64-bit) | [3165][cedr-october-2026] |
 | 1.5.0 | 2977 | [3027](https://computerchess.org.uk/4040/cgi/engine_details.cgi?print=Details&each_game=0&eng=Coco%201.5.0%2064-bit#Coco_1_5_0_64-bit) | - | - |
 | 1.4.0 | - | - | - | - |
@@ -34,8 +35,6 @@ The features and UCI options below describe **Coco 2.0**. See the
 | 1.1.0 | - | - | - | - |
 | 1.0.1 | - | - | - | - |
 | 1.0.0 | - | - | - | - |
-
-The CEDR column shows the rating listed in the October 2026 qualifying standings. The league uses [3 minutes plus 3 seconds per move](https://chessengines.blogspot.com/p/league.html).
 
 ## Quick start
 
